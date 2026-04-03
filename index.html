@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>動画編集 マイニングゲーム</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --text-color: #e0e0e0;
+            --btn-bg: #333;
+            --btn-hover: #555;
+            --accent: #ffb300;
+        }
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+        .screen { display: none; max-width: 600px; margin: 0 auto; background: #1e1e1e; padding: 20px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        .active { display: block; }
+        h1, h2 { color: var(--accent); }
+        .status-bar { background: #2c2c2c; padding: 10px; border-radius: 5px; margin-bottom: 20px; display: flex; justify-content: space-around; }
+        input { width: 80px; padding: 10px; font-size: 18px; text-align: right; margin: 0 5px; background: #333; color: white; border: 1px solid #555; border-radius: 5px; }
+        button { background-color: var(--btn-bg); color: white; border: 1px solid #555; padding: 12px 24px; font-size: 16px; cursor: pointer; border-radius: 5px; margin: 10px 5px; transition: 0.2s; }
+        button:hover { background-color: var(--btn-hover); }
+        button.primary { background-color: var(--accent); color: #000; font-weight: bold; }
+        button.primary:hover { background-color: #e6a200; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        #log-area { height: 300px; overflow-y: auto; background: #000; padding: 10px; text-align: left; font-family: monospace; border: 1px solid #444; margin-bottom: 20px; }
+        .log-line { margin: 2px 0; font-size: 14px; }
+        .catalog-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; text-align: left; }
+        .catalog-item { background: #2c2c2c; padding: 10px; border-radius: 5px; }
+        .gem-result-item { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #333; }
+        #loading { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: var(--accent); display: flex; justify-content: center; align-items: center; font-size: 24px; z-index: 999; display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="loading">通信中...</div>
+
+    <div id="screen-home" class="screen active">
+        <h1>MINE YOUR EDIT</h1>
+        <div class="status-bar">
+            <div>所持金: <span id="display-money">0</span> G</div>
+            <div>累計獲得: <span id="display-total">0</span> G</div>
+        </div>
+        
+        <button onclick="exchangeCoin()" style="background-color: #d32f2f; margin-bottom: 20px;">💰 現実のコインと交換 (10,000G)</button>
+        
+        <p>動画時間を入力してください</p>
+        <div>
+            <input type="number" id="input-min" min="0" value="15"> 分
+            <input type="number" id="input-sec" min="0" max="59" value="0"> 秒
+        </div>
+        <button class="primary" onclick="goToMultiplier()">③ 確定する</button>
+        <hr style="border-color: #444; margin: 20px 0;">
+        <button onclick="goToCatalog()">💎 宝石一覧 (図鑑)</button>
+    </div>
+
+    <div id="screen-multiplier" class="screen">
+        <h2>編集の難易度は？</h2>
+        <p>動画時間: <span id="disp-total-sec">0</span>秒</p>
+        <button onclick="selectMultiplier(1)">等倍 (通常)</button>
+        <button onclick="selectMultiplier(2)">2倍 (大変だった)</button>
+        <button onclick="selectMultiplier(3)">3倍 (地獄だった)</button>
+    </div>
+
+    <div id="screen-start" class="screen">
+        <h2>エネルギー変換完了</h2>
+        <p style="font-size: 24px; color: var(--accent);">変換出力: <span id="disp-w">0</span> W</p>
+        <p>※Wの数だけ抽選を行います</p>
+        <button class="primary" onclick="startExcavation()">⑥ 発掘開始</button>
+    </div>
+
+    <div id="screen-mining" class="screen">
+        <h2>発掘中...</h2>
+        <div id="log-area"></div>
+        <button id="btn-cashout" class="primary" style="display: none;" onclick="goToResult()">⑧ 換金する</button>
+    </div>
+
+    <div id="screen-result" class="screen">
+        <h2>発掘結果</h2>
+        <div style="background: #2c2c2c; padding: 20px; border-radius: 5px; margin-bottom: 20px;">
+            <p>今回の発掘額</p>
+            <h3 style="color: var(--accent); font-size: 28px; margin: 10px 0;">+<span id="result-money">0</span> G</h3>
+        </div>
+        <div id="result-gems" style="text-align: left; max-height: 200px; overflow-y: auto; background: #000; padding: 10px; margin-bottom: 20px;"></div>
+        <button class="primary" onclick="goToHome()">⑩ ホームへ戻る</button>
+    </div>
+
+    <div id="screen-catalog" class="screen">
+        <h2>宝石一覧 (最大カラット)</h2>
+        <div id="catalog-list" class="catalog-grid"></div>
+        <br>
+        <button onclick="goToHome()">ホームへ戻る</button>
+    </div>
+
+<script>
+    // ★ ここにGASのウェブアプリURLを設定します ★
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbzS4TVRnSaXbmCr0Nz3FG7Iv5XXWvASPC7s3BPglk71xnDcNQ1_z2ongQVU6C54fXVZ/exec";
+
+    const gemData = [
+        { id: "diamond", name: "ダイヤモンド", prob: 0.1, price: 11000, color: "#E0F7FA" },
+        { id: "alexandrite", name: "アレキサンドライト", prob: 0.1, price: 7500, color: "#B39DDB" },
+        { id: "emerald", name: "エメラルド", prob: 0.4, price: 2500, color: "#81C784" },
+        { id: "ruby", name: "ルビー", prob: 0.4, price: 2000, color: "#E57373" },
+        { id: "sapphire", name: "サファイア", prob: 0.4, price: 1800, color: "#64B5F6" },
+        { id: "tanzanite", name: "タンザナイト", prob: 1.2, price: 750, color: "#7986CB" },
+        { id: "aquamarine", name: "アクアマリン", prob: 1.2, price: 650, color: "#4DD0E1" },
+        { id: "pearl", name: "パール", prob: 1.2, price: 550, color: "#F5F5F5" },
+        { id: "garnet", name: "ガーネット", prob: 2.1, price: 310, color: "#C62828" },
+        { id: "amethyst", name: "アメジスト", prob: 2.1, price: 310, color: "#9C27B0" },
+        { id: "topaz", name: "トパーズ", prob: 2.1, price: 310, color: "#FFCA28" },
+        { id: "zircon", name: "ジルコン", prob: 2.1, price: 310, color: "#4DB6AC" },
+        { id: "lapis", name: "ラピスラズリ", prob: 2.2, price: 310, color: "#283593" },
+        { id: "iolite", name: "アイオライト", prob: 2.2, price: 310, color: "#5C6BC0" },
+        { id: "moonstone", name: "ムーンストーン", prob: 2.2, price: 310, color: "#FFF59D" }
+    ];
+
+    const missItems = ["石ころ", "ただの土", "割れたビン", "ボロボロの靴", "謎の骨", "泥だらけの草", "ガラス片"];
+
+    let playerData = { money: 0, totalMoney: 0, catalog: {} };
+    let gameState = { seconds: 0, w: 0, currentEarnings: 0, foundGems: [] };
+
+    window.onload = async () => {
+        await loadData();
+        updateHomeDisplay();
+    };
+
+    function showLoading(show) { document.getElementById('loading').style.display = show ? 'flex' : 'none'; }
+
+    // データの読み込み
+    async function loadData() {
+        if(!GAS_URL.startsWith("http")) return; // URL未設定時はスキップ
+        showLoading(true);
+        try {
+            const res = await fetch(GAS_URL);
+            playerData = await res.json();
+        } catch(e) { alert("データ読み込み失敗。ローカルで動作します。"); }
+        showLoading(false);
+    }
+
+    // データの保存
+    async function saveData() {
+        if(!GAS_URL.startsWith("http")) return;
+        showLoading(true);
+        try {
+            await fetch(GAS_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' }, // CORS回避のためtext/plain
+                body: JSON.stringify(playerData)
+            });
+        } catch(e) { alert("データ保存に失敗しました。"); }
+        showLoading(false);
+    }
+
+    function showScreen(screenId) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.getElementById(screenId).classList.add('active');
+    }
+
+    function updateHomeDisplay() {
+        document.getElementById('display-money').innerText = playerData.money.toLocaleString();
+        document.getElementById('display-total').innerText = playerData.totalMoney.toLocaleString();
+    }
+
+    // コイン交換
+    async function exchangeCoin() {
+        if (playerData.money >= 10000) {
+            if (confirm("10,000Gを消費して現実のコインと交換しますか？")) {
+                playerData.money -= 10000;
+                updateHomeDisplay();
+                await saveData();
+                alert("コインを獲得しました！ガチャを回してきてください！");
+            }
+        } else {
+            alert(`Gが足りません。(あと ${(10000 - playerData.money).toLocaleString()} G必要です)`);
+        }
+    }
+
+    function goToMultiplier() {
+        const m = parseInt(document.getElementById('input-min').value) || 0;
+        const s = parseInt(document.getElementById('input-sec').value) || 0;
+        gameState.seconds = (m * 60) + s;
+        if (gameState.seconds <= 0) return alert("時間を入力してください");
+        document.getElementById('disp-total-sec').innerText = gameState.seconds;
+        showScreen('screen-multiplier');
+    }
+
+    function selectMultiplier(mult) {
+        gameState.w = Math.floor(gameState.seconds * mult * 0.1);
+        document.getElementById('disp-w').innerText = gameState.w;
+        showScreen('screen-start');
+    }
+
+    async function startExcavation() {
+        showScreen('screen-mining');
+        const logArea = document.getElementById('log-area');
+        const btnCashout = document.getElementById('btn-cashout');
+        logArea.innerHTML = '';
+        btnCashout.style.display = 'none';
+        
+        gameState.currentEarnings = 0;
+        gameState.foundGems = [];
+
+        for (let i = 1; i <= gameState.w; i++) {
+            const result = drawGacha();
+            let logHtml = '';
+            
+            if (result.isHit) {
+                const value = Math.floor(result.gem.price * result.carat);
+                gameState.currentEarnings += value;
+                gameState.foundGems.push({ gem: result.gem, carat: result.carat, value: value });
+                logHtml = `<div class="log-line" style="color: ${result.gem.color}; font-weight: bold;">
+                    [W ${String(i).padStart(3, '0')}] 輝きが！ ${result.gem.name} (${result.carat.toFixed(2)}ct) 獲得！ +${value.toLocaleString()}G
+                </div>`;
+            } else {
+                logHtml = `<div class="log-line" style="color: #666;">[W ${String(i).padStart(3, '0')}] ... ${result.name}</div>`;
+            }
+
+            logArea.insertAdjacentHTML('beforeend', logHtml);
+            logArea.scrollTop = logArea.scrollHeight;
+            await new Promise(r => setTimeout(r, 200));
+        }
+        btnCashout.style.display = 'inline-block';
+    }
+
+    function drawGacha() {
+        const rand = Math.random() * 100;
+        let cumulative = 0;
+        for (let gem of gemData) {
+            cumulative += gem.prob;
+            if (rand < cumulative) {
+                const carat = 5.0 - (Math.pow(Math.random(), 0.25) * 4.99);
+                return { isHit: true, gem: gem, carat: carat };
+            }
+        }
+        const missName = missItems[Math.floor(Math.random() * missItems.length)];
+        return { isHit: false, name: missName };
+    }
+
+    async function goToResult() {
+        playerData.money += gameState.currentEarnings;
+        playerData.totalMoney += gameState.currentEarnings;
+
+        gameState.foundGems.forEach(item => {
+            const id = item.gem.id;
+            if (!playerData.catalog[id] || playerData.catalog[id] < item.carat) {
+                playerData.catalog[id] = item.carat;
+            }
+        });
+
+        // 換金額の高い順にソート
+        gameState.foundGems.sort((a, b) => b.value - a.value);
+
+        document.getElementById('result-money').innerText = gameState.currentEarnings.toLocaleString();
+        
+        let gemsHtml = gameState.foundGems.map(item => 
+            `<div class="gem-result-item" style="color:${item.gem.color}">
+                <span>${item.gem.name} (${item.carat.toFixed(2)}ct)</span>
+                <span>${item.value.toLocaleString()} G</span>
+            </div>`
+        ).join('');
+        if(gemsHtml === '') gemsHtml = '<div style="color:#888; text-align:center;">宝石は出ませんでした…</div>';
+        
+        document.getElementById('result-gems').innerHTML = gemsHtml;
+        showScreen('screen-result');
+
+        // 非同期でバックグラウンド保存
+        saveData();
+    }
+
+    function goToHome() {
+        updateHomeDisplay();
+        showScreen('screen-home');
+    }
+
+    function goToCatalog() {
+        const catalogList = document.getElementById('catalog-list');
+        catalogList.innerHTML = '';
+        gemData.forEach(gem => {
+            const maxCarat = playerData.catalog[gem.id] ? playerData.catalog[gem.id].toFixed(2) : "未取得";
+            catalogList.innerHTML += `
+                <div class="catalog-item">
+                    <div style="color: ${gem.color}; font-weight: bold;">${gem.name}</div>
+                    <div style="color: #aaa; font-size: 14px;">MAX: ${maxCarat} ct</div>
+                </div>
+            `;
+        });
+        showScreen('screen-catalog');
+    }
+</script>
+</body>
+</html>
