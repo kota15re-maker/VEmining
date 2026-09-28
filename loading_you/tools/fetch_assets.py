@@ -19,6 +19,7 @@
     python3 tools/fetch_assets.py --dry-run           # 保存せず候補だけ表示
     python3 tools/fetch_assets.py --credits           # CREDITS.md だけ作り直す
     python3 tools/fetch_assets.py --prune             # crops.json で使っていない画像を消し、記録は candidates.json に移す
+    python3 tools/fetch_assets.py --restore           # manifest.json に載っている画像のうち、手元に無いものを取り直す
 
 似た画像ばかりにならないよう、同じ資料（work / item）からは2枚まで、見た目がほぼ同じ画像
 （平均ハッシュの差が小さいもの）は1枚だけにする。サイトへの負荷を避けるため、リクエストの間に待ち時間を入れる。
@@ -224,6 +225,20 @@ def prune(man):
     print(f"kept {len(keep)}, moved {len(drop)} to candidates.json")
 
 
+def restore(man):
+    """manifest.json の記録から、手元に無い画像だけを取り直す（別の場所へ移したときや、画像を外して持ち運んだとき用）。"""
+    for m in man:
+        f = os.path.join(ASSETS, m["file"])
+        if os.path.exists(f):
+            continue
+        try:
+            save_image(get(m["image_url"], binary=True), f)
+            print("restored", m["file"])
+        except Exception as e:
+            print(f"取り直せませんでした: {m['file']} {m['image_url']} ({e})", file=sys.stderr)
+        time.sleep(0.5)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", nargs="*", help="カテゴリを絞る")
@@ -231,12 +246,15 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--credits", action="store_true")
     ap.add_argument("--prune", action="store_true")
+    ap.add_argument("--restore", action="store_true")
     args = ap.parse_args()
     man = load_manifest()
     if args.credits:
         write_credits(man); return
     if args.prune:
         prune(man); return
+    if args.restore:
+        restore(man); return
     seen = {(m["source"], m["id"]) for m in man}
     per_work = {}
     for m in man:

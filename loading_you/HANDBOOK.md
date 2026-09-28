@@ -266,6 +266,7 @@
 - 暗い写真が画面全体を覆う場面（入れ子など）は、層ごとに平均の明るさを揃える。
 - 素材が無いカテゴリは、描いたモチーフで動くようにしておく（`has(kind)` で分岐）。
 - 使わなかった候補は `python3 tools/fetch_assets.py --prune` で画像を消し、記録だけ `assets/candidates.json` に残す。
+- 画像を外して持ち運んだときや、別の場所へ移して画像が欠けたときは、`python3 tools/fetch_assets.py --restore` で `manifest.json` の画像URLから取り直せる。
 
 ---
 
