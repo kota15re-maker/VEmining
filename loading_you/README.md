@@ -9,7 +9,9 @@
 | `loading_you_45s_1080x1920.mp4` | 成果物（1080×1920、30fps、45.0秒、1350フレーム、音声付き） |
 | `contact_sheet.png` | 主要な時刻のコマを並べたもの |
 | `assets/` | 素材画像（Wellcome Collection、Library of Congress）、`manifest.json`（出典とライセンスの記録）、`CREDITS.md`、`crops.json`（切り抜き範囲）、`candidates.json`（使わなかった候補の記録） |
-| `tools/` | 素材を集める `fetch_assets.py`、一覧を作る `contact_sheet.py` |
+| `tools/` | 素材を集める `fetch_assets.py`、一覧を作る `contact_sheet.py`、書き出した動画の品質チェック `qa_check.py` |
+| `HANDBOOK.md` | 制作ハンドブック。技法、文字の扱い（読める文章と読めない文字）、素材画像の集め方・選び方・切り抜き方、音、画質、光の点滅、手順、つまずいた点。別のプロジェクトで同じ質を保つための一式 |
+| `skill/SKILL.md` | Claude Code 用のスキル。移し先の `.claude/skills/loading-you-style/` に置くと、同じ方針で作業する |
 
 30秒版（`render_30s.py` と動画）はgitの履歴に残っています。
 
