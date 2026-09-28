@@ -18,6 +18,7 @@
     python3 tools/fetch_assets.py --only eye flower   # カテゴリを絞る
     python3 tools/fetch_assets.py --dry-run           # 保存せず候補だけ表示
     python3 tools/fetch_assets.py --credits           # CREDITS.md だけ作り直す
+    python3 tools/fetch_assets.py --prune             # crops.json で使っていない画像を消し、記録は candidates.json に移す
 
 似た画像ばかりにならないよう、同じ資料（work / item）からは2枚まで、見た目がほぼ同じ画像
 （平均ハッシュの差が小さいもの）は1枚だけにする。サイトへの負荷を避けるため、リクエストの間に待ち時間を入れる。
@@ -69,14 +70,22 @@ QUERIES = {
 }
 
 WELLCOME_OK = {"pdm", "cc-0"}
-LOC_OK = ["no known restrictions", "public domain", "no known copyright"]
-LOC_NG = ["not evaluated", "restricted", "restriction", "permission", "copyright is held", "may be protected", "undetermined"]
+LOC_NG = ["not evaluated", "may be restricted", "permission", "undetermined", "copyright is held", "may be protected"]
+
+
+def loc_rights_ok(advisory):
+    """LoC の権利表示（rights_advisory）で判断する。「No known restrictions」で始まるか public domain と書かれていて、
+    未評価・制限・許諾の文言を含まないものだけを通す。"""
+    a = advisory.lower().strip()
+    if any(k in a for k in LOC_NG):
+        return False
+    return a.startswith("no known restrictions") or "public domain" in a
 
 
 def get(url, binary=False, tries=3):
     for i in range(tries):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+            req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*" if binary else "application/json"})
             with urllib.request.urlopen(req, timeout=40) as r:
                 data = r.read()
             return data if binary else json.loads(data.decode("utf-8"))
@@ -104,7 +113,7 @@ def save_image(data, path):
 # ---------------------------------------------------------------- Wellcome Collection
 def wellcome_candidates(query, n):
     q = urllib.parse.urlencode({"query": query, "pageSize": min(100, n * 3), "locations.license": "pdm,cc-0",
-                                "include": "source.contributors,source.production,source.genres"})
+                                "include": "source.contributors,source.genres,source.subjects"})
     data = get("https://api.wellcomecollection.org/catalogue/v2/images?" + q)
     for it in data.get("results", []):
         loc = (it.get("locations") or [{}])[0]
@@ -115,8 +124,13 @@ def wellcome_candidates(query, n):
         if not info.endswith("/info.json"):
             continue
         src = it.get("source") or {}
-        contrib = [c.get("agent", {}).get("label") for c in src.get("contributors", []) if c.get("agent")]
-        dates = [d.get("label") for p in src.get("production", []) for d in p.get("dates", [])]
+        contrib, dates = [], []
+        try:                                                # 作者と年代は資料（work）の記録から取る
+            wk = get(f"https://api.wellcomecollection.org/catalogue/v2/works/{src.get('id')}?include=production,contributors")
+            contrib = [c.get("agent", {}).get("label") for c in wk.get("contributors", []) if c.get("agent")]
+            dates = [d.get("label") for p in wk.get("production", []) for d in p.get("dates", [])]
+        except Exception:
+            pass
         yield {
             "source": "wellcome", "id": it["id"], "work_id": src.get("id"),
             "title": src.get("title"), "creator": "; ".join(filter(None, contrib)) or None,
@@ -133,7 +147,7 @@ def loc_candidates(query, n):
     q = urllib.parse.urlencode({"q": query, "fo": "json", "c": min(100, n * 3), "fa": "online-format:image"})
     data = get("https://www.loc.gov/photos/?" + q)
     for it in data.get("results", []):
-        item_url = it.get("id") or it.get("url")
+        item_url = (it.get("url") or it.get("id") or "").replace("http://", "https://")
         if not item_url:
             continue
         time.sleep(0.8)
@@ -142,11 +156,14 @@ def loc_candidates(query, n):
         except Exception:
             continue
         item = d.get("item", {})
-        rights = " ".join(item.get("rights_advisory", []) or []) + " " + " ".join(
-            item.get("rights", []) if isinstance(item.get("rights"), list) else [str(item.get("rights", ""))])
-        rl = rights.lower()
-        if not any(k in rl for k in LOC_OK) or any(k in rl for k in LOC_NG):
+        adv = item.get("rights_advisory") or ""
+        adv = " ".join(adv) if isinstance(adv, list) else str(adv)
+        if not loc_rights_ok(adv):
             continue                                        # 権利がはっきりしないものは使わない
+        rt = item.get("rights") or []
+        rt = " ".join(rt) if isinstance(rt, list) else str(rt)
+        rights = (adv + " " + re.sub(r"<[^>]+>", " ", rt)).replace("&nbsp;", " ")
+        rights = re.sub(r"\s+", " ", rights).strip()
         best = None
         for res in d.get("resources", []):
             for group in res.get("files", []):
@@ -190,16 +207,36 @@ def write_credits(man):
     open(os.path.join(ASSETS, "CREDITS.md"), "w", encoding="utf-8").write("\n".join(lines) + "\n")
 
 
+def prune(man):
+    """動画で使う画像だけを残す。使わなかった候補は、画像を消して記録（URLとライセンス）だけ candidates.json に残す。"""
+    used = {c["file"] for c in json.load(open(os.path.join(ASSETS, "crops.json"), encoding="utf-8"))}
+    keep, drop = [m for m in man if m["file"] in used], [m for m in man if m["file"] not in used]
+    for m in drop:
+        f = os.path.join(ASSETS, m["file"])
+        if os.path.exists(f):
+            os.remove(f)
+    cand_p = os.path.join(ASSETS, "candidates.json")
+    cand = json.load(open(cand_p, encoding="utf-8")) if os.path.exists(cand_p) else []
+    cand += [{k: v for k, v in m.items() if k not in ("ahash", "file")} for m in drop]
+    json.dump(cand, open(cand_p, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    json.dump(keep, open(MANIFEST, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    write_credits(keep)
+    print(f"kept {len(keep)}, moved {len(drop)} to candidates.json")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", nargs="*", help="カテゴリを絞る")
     ap.add_argument("--per-query", type=int, default=3, help="1つの検索語から保存する最大枚数")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--credits", action="store_true")
+    ap.add_argument("--prune", action="store_true")
     args = ap.parse_args()
     man = load_manifest()
     if args.credits:
         write_credits(man); return
+    if args.prune:
+        prune(man); return
     seen = {(m["source"], m["id"]) for m in man}
     per_work = {}
     for m in man:
