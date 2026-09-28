@@ -12,6 +12,7 @@
 環境変数で上書きできるもの:
     FONT_KANA / FONT_SYM  フォントパス
     FFMPEG                ffmpeg 実行ファイル
+    CRF                   H.264 の画質（既定20。小さいほど高画質・大容量）
     OUT_DIR               preview と中間 WAV の出力先（既定はこのファイルの場所）
 写真素材は photos/ に画像を置くと FRAGS がそれを読む（無ければ手続き生成の代用品）。
 """
@@ -41,22 +42,92 @@ SR = 48000
 R0 = np.random.default_rng(7)
 
 # ---------------------------------------------------------------- タイムライン
-T_HOOK = 0.1             # 0.0–0.1   フック（3フレーム）
-T_ANOM = 4.0             # 4.0–7.0   第1の異変
-T_CALM2 = 7.0            # 7.0–9.5   偽の復旧（写真が1枚アイコンとして残る）
-T_INV = 9.5              # 9.5–14.0  侵入
-T_SWAP = 14.0            # 14.0–15.5 入れ替わり（Bが何食わぬ顔で座る）
-T_RAMP = 15.5            # 15.5–20.5 暴走
-T_COLL = 20.5            # 20.5–21.0 崩落（CRTが点に潰れる）
-T_SIL = 21.0             # 21.0–23.5 無音の間
-T_RET = 23.5             # 23.5–29.9 帰還
-T_LOOP = 29.9            # 29.9–30.0 ループ繋ぎ（冒頭のフック3フレーム）
+# 破壊は5回。回を追うごとに強く、長く、間の「静」は短く、少しずつ間違っていく。
+SEGS = [
+    (0.0, 0.1, 'hook'),       # フック（3フレーム）
+    (0.1, 2.4, 'calm1'),      # 静 I：本物
+    (2.4, 3.6, 'tear'),       # 破壊1「裂け」：顔が裂けてBが出る。静へのフラッシュバックを挟む
+    (3.6, 4.4, 'calm2'),      # 静 II：偽の復旧。写真が1枚アイコンとして残る
+    (4.4, 6.8, 'swarm'),      # 破壊2「増殖」：ウィンドウとエラーが画面を埋め尽くす
+    (6.8, 7.6, 'swap'),       # 静 III：Bが何食わぬ顔で座る
+    (7.6, 11.6, 'rampage'),   # 破壊3「暴走」：拡大縮小、写真、JPEG、文字の雨
+    (11.6, 12.0, 'freeze'),   # 静 IV：止まるが、残骸がすべて残ったまま
+    (12.0, 15.0, 'melt'),     # 破壊4「溶解」：画面が溶け落ち、ピクセルソート、縦ロール
+    (15.0, 16.0, 'half'),     # 静 V：左半分がA、右半分がB
+    (16.0, 21.5, 'climax'),   # 破壊5「全壊」：これまでの破壊が加速しながら全部戻ってくる
+    (21.5, 22.0, 'collapse'), # 崩落：CRTが点に潰れる
+    (22.0, 23.8, 'silence'),  # 無音の間
+    (23.8, 29.9, 'ret'),      # 帰還：冒頭と同じ画面。ただし窓2枚、目のずれ、化けた1文字
+    (29.9, 30.0, 'hook'),     # ループ繋ぎ
+]
+DESTROY = {'tear', 'swarm', 'rampage', 'melt', 'climax'}
+T_RET = 23.8
+T_LOOP = 29.9
+BLINKS = [1.9, 7.2, 15.5, 23.0, 26.2]
+ERRORS = [(2.9, 2), (3.25, 2)]                              # 破壊1のエラー
+CASCADE0 = 5.2                                              # エラーの連鎖が始まる時刻
+QUIET = [(9.6, 9.7), (18.5, 18.6)]                          # B単独の静かな3フレーム
+AFTERSHOCK = (27.3, 27.4)                                   # 帰還中の余震（3フレーム）
+DUOTONE = [(8.8, 9.0), (10.6, 10.8), (17.3, 17.5), (19.6, 19.8), (21.1, 21.3)]
+MODES = ['tear', 'swarm', 'rampage', 'melt']
+DUO_DARK, DUO_LIGHT = (176, 36, 128), (255, 176, 150)       # 赤紫のデュオトーン（明るさを周りと揃える）
 
-BLINKS = [1.9, 8.6, 15.0, 22.6, 26.0]
-ERRORS = [(6.2, 2), (10.8, 2), (12.1, 2), (13.3, 1)]       # (時刻, フレーム数)
-SPAWNS = [10.2, 11.0, 11.8, 12.6]                           # ウィンドウ増殖
-RAMP_QUIET = (18.0, 18.1)                                   # B単独の静かな3フレーム
-DUOTONE = [(16.7, 16.9), (19.1, 19.3), (19.7, 19.9)]
+
+def seg(t):
+    for t0, t1, name in SEGS:
+        if t0 <= t < t1:
+            return name, t0, t1
+    return SEGS[-1][2], SEGS[-1][0], SEGS[-1][1]
+
+
+def _climax_sched():
+    out, t, d, i = [], 16.0, 0.7, 0
+    while t < 20.8 - 1e-9:
+        e = min(20.8, t + d)
+        out.append((t, e, MODES[i % 4]))
+        t, d, i = e, max(0.15, d * 0.84), i + 1
+    out.append((20.8, 21.5, 'max'))
+    return out
+
+
+CLIMAX = _climax_sched()
+
+
+def in_quiet(t):
+    return any(a <= t < b for a, b in QUIET)
+
+
+def is_snap(t):
+    """破壊の途中に1コマ（12fps）だけ静の画面へ戻る。"""
+    name, t0, t1 = seg(t)
+    if in_quiet(t):
+        return False
+    if name == 'tear' and t - t0 > 0.25:
+        p = 0.16
+    elif name == 'climax' and t < 20.8:
+        if any(m0 <= t < m1 and mode == 'rampage' for m0, m1, mode in CLIMAX):
+            return False                                  # 写真が出る型の途中では戻らない（明滅を増やさない）
+        p = 0.1 + 0.16 * (t - t0) / (t1 - t0)
+    else:
+        return False
+    return np.random.default_rng(55000 + int(t * 12)).random() < p
+
+
+def is_stutter(t):
+    """0.1秒単位で映像と音が引っかかる（最初のコマで止まる）。"""
+    name, *_ = seg(t)
+    if name not in ('melt', 'climax') or in_quiet(t) or is_snap(t):
+        return False
+    return np.random.default_rng(777 + int(t * 10)).random() < 0.25
+
+
+def destroying(t):
+    name, *_ = seg(t)
+    if AFTERSHOCK[0] <= t < AFTERSHOCK[1]:
+        return True
+    return name in DESTROY and not is_snap(t) and not in_quiet(t)
+
+
 
 
 def hx(h): return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
@@ -439,6 +510,79 @@ def omen(a, r):
     return rgb_shift(np.roll(a, int(r.integers(-1, 2)), 1), 1)
 
 
+# ---------------------------------------------------------------- 追加のエフェクト
+_dr = np.random.default_rng(88)
+DRIP = np.asarray(Image.fromarray((_dr.random((1, 24)) * 255).astype(np.uint8)).resize((W, 1), Image.BICUBIC), float)[0] / 255
+DRIP = DRIP ** 2
+
+
+def melt_fx(a, amount):
+    """溶け落ち：列ごとに違う量だけ下へ垂れる。"""
+    d = (amount * (0.25 + DRIP)).astype(int)
+    ys = np.clip(np.arange(H)[:, None] - d[None, :], 0, H - 1)
+    return a[ys, np.arange(W)[None, :]]
+
+
+def pixel_sort(a, y0, y1, x0, x1):
+    seg_ = a[y0:y1, x0:x1]
+    idx = np.argsort(seg_.astype(int).sum(2), axis=1)
+    a[y0:y1, x0:x1] = np.take_along_axis(seg_, idx[..., None], 1)
+    return a
+
+
+def mosaic(a, bs):
+    return np.asarray(Image.fromarray(a).resize((W // bs, H // bs), Image.BOX).resize((W, H), Image.NEAREST)).copy()
+
+
+def vroll(a, off):
+    """CRTの縦ロール。継ぎ目に暗い帯。"""
+    off %= H
+    o = np.roll(a, off, 0)
+    o[off:off + 6] = (28, 18, 34)
+    return o
+
+
+def big_tile(a, k, x, y, s):
+    t = np.asarray(Image.fromarray(FRAGS[k % NFRAG]).resize((8, 8), Image.BILINEAR).resize((s, s), Image.NEAREST))
+    x0, y0, x1, y1 = max(0, x), max(0, y), min(W, x + s), min(H, y + s)
+    if x1 > x0 and y1 > y0:
+        a[y0:y1, x0:x1] = t[y0 - y:y1 - y, x0 - x:x1 - x]
+
+
+def photo_pass(a, t, p=0.65):
+    """写真。全面・上下分割・帯は1/3秒単位でしか切り替えない（全面の明滅を毎秒3回以下に保つ）。"""
+    slot = int(t * 3)
+    ps = np.random.default_rng(700 + slot)
+    q = ps.random()
+    i, j, mode = int(ps.integers(NFRAG)), int(ps.integers(NFRAG)), int(ps.integers(4))
+    if q < p / 3:
+        a = frag_full(i, mode).copy()
+    elif q < 2 * p / 3:
+        ys = int(ps.integers(200, 440))
+        a[:ys] = frag_full(i, mode)[:ys]; a[ys:] = frag_full(j, (mode + 1) % 4)[ys:]
+    elif q < p:
+        y0 = int(ps.integers(40, 400))
+        a[y0:y0 + 220] = frag_full(i, mode)[y0:y0 + 220]
+    rr = np.random.default_rng(int(t * 12) + 4321)             # 細い帯はコマ単位で差し込む
+    for _ in range(int(rr.integers(1, 4))):
+        y0, h = int(rr.integers(0, H - 60)), int(rr.integers(8, 60))
+        a[y0:y0 + h] = frag_full(int(rr.integers(NFRAG)), int(rr.integers(4)))[y0:y0 + h]
+    return a
+
+
+def text_rain(a, t, u, rs, cols=20, big=3):
+    im = Image.fromarray(a)
+    c = [CRASH[int(rs.integers(5))], CRASH[int(rs.integers(5))]]  # 1コマに事故色は2色まで
+    for k in range(cols):
+        if rs.random() < 0.35: continue
+        rk = np.random.default_rng(k + 50)
+        y = int((rk.random() * 700 + (200 + 400 * rk.random()) * t) % 760) - 60
+        sc = 1 + (k * 7) % big
+        for n_ in range(3):
+            stamp(im, (8 + k * 18) % W, y + n_ * G * sc, int(rs.integers(NPSEUDO)), c[k % 2], scale=sc)
+    return np.asarray(im).copy()
+
+
 # ---------------------------------------------------------------- 状態
 def _ease(n, seed):
     rr = np.random.default_rng(seed); inc = rr.random(n + 1) ** 2
@@ -459,8 +603,8 @@ def progress_main(t):
 def progress_front(t):
     """帰還で手前に出る窓。0から溜まり直し、98%で止まり、最後に1%だけ進む。"""
     if t < T_RET: return 0.98
-    if t < 24.3: return 0.0
-    if t < 26.5: return 0.98 * EASE2[min(int((t - 24.3) * 12), len(EASE2) - 1)]
+    if t < 24.4: return 0.0
+    if t < 26.6: return 0.98 * EASE2[min(int((t - 24.4) * 12), len(EASE2) - 1)]
     return 0.99 if t >= 28.6 else 0.98
 
 
@@ -468,7 +612,7 @@ def click_times():
     out, prev = [], None
     for i in range(int(DUR * 120)):
         t = i / 120
-        p = progress_main(t) if t < T_ANOM else progress_front(t) if T_RET <= t < T_LOOP else None
+        p = progress_main(t) if t < 2.4 else progress_front(t) if T_RET <= t < T_LOOP else None
         if p is not None and prev is not None and p != prev:
             out.append((t, p))
         prev = p
@@ -477,19 +621,19 @@ def click_times():
 
 PROG = click_times()
 
+SWAY_AMP = {'tear': 7, 'swarm': 4, 'rampage': 6, 'melt': 3, 'climax': 8}
+
 
 def sway(t):
+    name, *_ = seg(t)
+    amp = SWAY_AMP.get(name, 0)
     tq = int(t * 12) / 12
-    if T_ANOM <= t < T_CALM2: amp = 3
-    elif T_INV <= t < T_SWAP: amp = 3
-    elif T_RAMP <= t < T_COLL: amp = 5
-    else: return 0
-    return int(round(amp * math.sin(2 * math.pi * 0.8 * (tq - T_ANOM))))
+    return int(round(amp * math.sin(2 * math.pi * 1.4 * tq)))
 
 
 def look(t):
-    if 4.3 <= t < 4.9: return -3
-    if 4.9 <= t < 5.5: return 3
+    if 2.1 <= t < 2.25: return -3        # 最初の破壊の直前、目が左右を見る
+    if 2.25 <= t < 2.4: return 3
     return 0
 
 
@@ -498,61 +642,67 @@ def blinking(t, delay=0.0):
 
 
 def line2_ids(t, step):
+    name, t0, t1 = seg(t)
     if t >= T_RET:
         return LINE2_END
     ids = READ_ID.copy()
-    if t < 8.0 or T_SWAP <= t < T_RAMP:
-        if ERRORS[0][0] <= t < ERRORS[0][0] + 2 / FPS:     # エラーの瞬間だけ5文字目が化ける
-            ids[4] = CH_FIX[4]
+    if name in ('calm1', 'swap', 'half', 'hook'):
         return ids
-    if t < T_INV:                                          # 偽の復旧：1文字ずつ化けて、そのまま
-        for i in CORR_ORDER[:1 + int((t - 8.0) / 0.35)]:
-            ids[i] = CH_FIX[i]
+    if name == 'calm2':
+        for i in CORR_ORDER[:3]: ids[i] = CH_FIX[i]
         return ids
-    n = 11 if t >= T_RAMP else min(11, 5 + int((t - T_INV) / 0.3))
+    if name == 'freeze':
+        return [CH_FIX[i] for i in range(11)]
+    n = min(11, 1 + int((t - t0) / 0.15)) if name == 'tear' else 11
     for i in CORR_ORDER[:n]:
         ids[i] = int(np.random.default_rng(i * 7 + step).integers(NPSEUDO))
     return ids
 
 
-# ウィンドウ増殖： (時刻, x, y, style, 漂う速度)
-SPAWN_WINS = [(SPAWNS[0], 70, 150, 1, (22, 30)), (SPAWNS[1], 30, 230, 0, (-14, 26)),
-              (SPAWNS[2], 100, 300, 3, (18, -20)), (SPAWNS[3], 20, 420, 1, (26, -30))]
+# 破壊2で湧き出るウィンドウ： (出現時刻, x, y, style, 漂う速度)
+_sw = np.random.default_rng(321)
+SWARM = [(4.5 + i * 0.11, int(_sw.integers(-60, 200)), int(_sw.integers(40, 500)), int(_sw.integers(0, 4)),
+          (float(_sw.uniform(-70, 70)), float(_sw.uniform(-60, 60)))) for i in range(20)]
+SWARM_END = 6.8
 
 
 def windows(t, prog):
+    name, *_ = seg(t)
     wins = [(64, 96, 0, 1.0, prog)]
-    if T_SWAP <= t < T_RAMP or t >= T_RET:
+    if name in ('swap', 'half') or t >= T_RET:
         wins.append((82, 118, 0, 1.0, progress_front(t)))
-    elif T_INV <= t < T_SIL:
-        te = min(t, T_SWAP)
-        trail = t < T_SWAP
-        for (ts, x, y, sty, v) in SPAWN_WINS:
+    elif name == 'swarm':
+        for (ts, x, y, sty, v) in SWARM:
             if t >= ts:
-                for k in ((3, 2, 1, 0) if trail else (0,)):        # 残像の尾を引いて漂う
-                    tt = max(ts, te - k * 0.05)
+                for k in (3, 2, 1, 0):                      # 残像の尾を引いて漂う
+                    tt = max(ts, t - k * 0.05)
                     wins.append((x + v[0] * (tt - ts), y + v[1] * (tt - ts), sty, [1, .45, .28, .15][k], prog))
+    elif name in ('rampage', 'freeze', 'melt', 'climax', 'collapse'):
+        for i, (ts, x, y, sty, v) in enumerate(SWARM):     # 増殖した窓の半分は居座る
+            if i % 2 == 0:
+                wins.append((x + v[0] * (SWARM_END - ts), y + v[1] * (SWARM_END - ts), sty, 1.0, prog))
     return wins
 
 
 def state(t):
+    name, *_ = seg(t)
     st = {'t': t}
     step = int(t * 12)
     st['pidx'] = step % 6
     st['scale'] = round(1.22 + 0.02 * math.sin(2 * math.pi * step / 12 * 0.9), 4)
     sw, swp = sway(t), sway(t - 1 / 12)
     st['sway'] = sw
-    st['edx'] = look(t - 1 / 12) + (swp - sw) + (2 if t >= T_RET else 0)   # 目だけ1コマ遅れる
+    st['edx'] = look(t - 1 / 12) + (swp - sw) + (2 if t >= T_RET else 4 if name == 'freeze' else 0)
     st['edy'] = 0
     st['blink'] = blinking(t)
     st['progress'] = progress_main(t)
     rr = np.random.default_rng(step * 3 + 5)
     l1 = LINE1.copy()
-    live = T_INV <= t < T_SWAP or T_RAMP <= t < T_SIL
-    for _ in range(3 if live else 1):
+    live = name in DESTROY
+    for _ in range(4 if live else 1):
         if rr.random() < 0.25 or live: l1[int(rr.integers(9))] = int(rr.integers(NPSEUDO))
     l1c = [(g, FRAME) for g in l1]
-    if 4.4 <= t < T_SWAP or T_RAMP <= t < T_SIL: l1c[3] = (l1[3], RD)
+    if live or name == 'freeze': l1c[3] = (l1[3], RD)
     st['l1'] = l1c
     st['l2'] = [(g, INK) for g in line2_ids(t, step)]
     st['wins'] = windows(t, st['progress'])
@@ -571,7 +721,9 @@ def render(st, variant=0, show_windows=True, icon=None):
     mx, my = MX0 + st['sway'], MY0
     img.alpha_composite(m, (mx, my))
     if show_windows:
-        for w in st['wins'][1:]: draw_win(w)
+        for w in st['wins'][1:]:
+            x, y = int(w[0]), int(w[1])
+            if -WW < x < W and -WH < y < H: draw_win(w)
     for i, g in enumerate(FOOT): stamp(img, 180 - len(FOOT) * 13 // 2 + i * 13, 556, g, FOOTC)
     if int(st.get('t', 0) * 2) % 2 == 0:
         ImageDraw.Draw(img).rectangle([180 + len(FOOT) * 13 // 2 + 2, 558, 180 + len(FOOT) * 13 // 2 + 8, 569], fill=FOOTC)
@@ -582,6 +734,98 @@ def render(st, variant=0, show_windows=True, icon=None):
         for i, g in enumerate(ICON_LABEL): stamp(im, IX + 32 - len(ICON_LABEL) * 13 // 2 + i * 13, IY + 68, g, FOOTC)
         a = np.asarray(im).copy()
     return a, mx, my, np.asarray(m.split()[3])
+
+
+# ---------------------------------------------------------------- 破壊の型（climax でも使い回す）
+def fx_tear(t, st, r, rs, u, power=1.0):
+    """顔が裂けてBが覗き、裂け目が画面全体に走る。写真が突き刺さる。"""
+    A, mx, my, mm = render(st)
+    B, *_ = render(st, variant=1)
+    a = slices(A, B, rs, int((8 + 18 * u) * power), int((20 + 50 * u) * power), my + 20, my + 180, mx, mx + MC)
+    a = slices(a, B, r, int((3 + 10 * u) * power), int(20 + 60 * u), 0, H)
+    for k in range(1 + int(2 * u * power)):
+        s = [64, 96, 128][int(rs.integers(3))]
+        big_tile(a, int(rs.integers(NFRAG)), int(rs.integers(-30, W - 40)), int(rs.integers(0, H - 60)), s)
+    if 2.6 <= t < 2.6 + 1 / FPS or rs.random() < 0.1:
+        y = int(rs.integers(120, 520)); a[y:y + 6] = YG; a[y + 6:y + 9] = np.roll(a[y + 6:y + 9], 12, 1)
+    for te, nf in ERRORS:
+        if te <= t < te + nf / FPS:
+            a = with_error(a, int(rs.integers(20, 220)), int(rs.integers(150, 420)), np.random.default_rng(int(te * 10)))
+    a = block_glitch(a, r, int((10 + 30 * u) * power))
+    a = rgb_shift(a, int((4 + 10 * u) * power))
+    if rs.random() < 0.15:                                 # 目にズームで突っ込む
+        a = zoom(a, 2.4, 180, 356)
+    if u > 0.75:
+        a = crush(a, 10)
+    return a
+
+
+def fx_swarm(t, st, r, rs, u, tl, power=1.0):
+    """ウィンドウが湧き、エラーが連鎖し、背景だけRGBがずれる。"""
+    A, mx, my, mm = render(st)
+    B, *_ = render(st, variant=1)
+    A = slices(A, B, rs, int((6 + 10 * u) * power), 30, my + 60, my + 175, mx, mx + MC)
+    A[my + 30:my + 170:2, 180:mx + MC] = B[my + 30:my + 170:2, 180:mx + MC]
+    n = int(tl * 22 * power)                               # エラーの連鎖
+    if n > 0:
+        im = Image.fromarray(A)
+        for i in range(max(0, n - 40), n):
+            error_box(im, 6 + (i % 24) * 9, 70 + (i % 24) * 14 + (i // 24) * 26, np.random.default_rng(i))
+        A = np.asarray(im).copy()
+    dx = int((6 + 8 * u) * power)
+    a = bg_only(A, lambda z: rgb_shift(z, dx), mm, mx, my)
+    for _ in range(int(3 + 6 * u)):
+        y = int(r.integers(0, H)); a[y:y + 1 + int(r.integers(0, 3))] = CY if r.random() < .5 else MG
+    if int(t * 10) % 4 == 0 and int(t * FPS) % 3 < 2:     # 拍に合わせたズームの突き
+        cr = np.random.default_rng(int(t * 10))
+        a = zoom(a, 1.8, int(cr.integers(80, 280)), int(cr.integers(150, 500)))
+    a = block_glitch(a, r, int((8 + 14 * u) * power))
+    if u > 0.87:
+        a = crush(vroll(a, int((u - 0.87) * 3000)), 12)
+    return a
+
+
+def fx_rampage(t, st, r, rs, u, power=1.0, photos=True):
+    """拡大縮小、写真、文字の雨、帯の反転、ピクセル破損、JPEG。"""
+    A, mx, my, mm = render(st)
+    B, *_ = render(st, variant=1)
+    A = slices(A, B, rs, 12, 40, my + 20, my + 175, mx, mx + MC)
+    A[my + 30:my + 170:2, 180:mx + MC] = B[my + 30:my + 170:2, 180:mx + MC]
+    a = zoom(A, 1 + 1.1 * math.sin(math.pi * u * 3) ** 2, 180, 360)
+    if photos:
+        a = photo_pass(a, t)
+    a = text_rain(a, t, u, rs)
+    if rs.random() < 0.5:
+        im = Image.fromarray(a); error_box(im, int(rs.integers(10, 230)), int(rs.integers(60, 540)), rs); a = np.asarray(im).copy()
+    for _ in range(int(rs.integers(1, 4))):                # 帯の反転（面積は小さく）
+        y0, hb = int(rs.integers(0, H - 30)), int(rs.integers(6, 34))
+        a[y0:y0 + hb] = 255 - a[y0:y0 + hb]
+    a = block_glitch(a, r, int((18 + 20 * u) * power))
+    for _ in range(int(6 * power)):
+        y, h = int(r.integers(0, H)), int(r.integers(2, 24))
+        a[y:y + h] = np.roll(a[y:y + h], int(r.integers(-60, 61)), 1)
+    if rs.random() < 0.3:
+        a = mosaic(a, [6, 10, 16][int(rs.integers(3))])
+    a = crush(a, 6 + int(rs.integers(0, 16)))
+    return rgb_shift(a, int((4 + 8 * rs.random()) * power))
+
+
+def fx_melt(t, st, r, rs, u, power=1.0):
+    """溶け落ちる。ピクセルソートの筋、後半は縦ロール。"""
+    A, mx, my, mm = render(st)
+    B, *_ = render(st, variant=1)
+    A[my + 30:my + 170:2, 180:mx + MC] = 255 - B[my + 30:my + 170:2, 180:mx + MC]   # 反転したBが縞で覗く
+    a = melt_fx(A, (40 + 260 * u ** 1.3) * power)
+    for _ in range(int(2 + 6 * u)):
+        y0 = int(rs.integers(0, H - 40)); x0 = int(rs.integers(0, W // 2))
+        a = pixel_sort(a, y0, y0 + int(rs.integers(10, 60)), x0, min(W, x0 + int(rs.integers(80, 300))))
+    a = block_glitch(a, r, int(8 * power))
+    if u > 0.45:
+        a = vroll(a, int(((u - 0.45) / 0.55) ** 1.5 * H * 1.6))
+    a = rgb_shift(a, int(3 + 6 * u))
+    if u > 0.92:
+        a = mosaic(a, 16)
+    return a
 
 
 # ---------------------------------------------------------------- 場面
@@ -601,139 +845,93 @@ def hook(k):
     return np.asarray(im)
 
 
-def calm1(t, st, r, rs):
+def sc_calm1(t, st, r, rs, t0, t1):
     a, *_ = render(st)
     if 3 <= int(t * FPS) < 7: a = rgb_shift(a, [5, 3, 2, 1][int(t * FPS) - 3])   # フックの余韻
-    if t >= 3.6: a = omen(a, r)
+    if t >= 2.1: a = omen(a, r)
     return a
 
 
-def anomaly(t, st, r, rs):
-    """4.0–7.0：体が揺れ、目だけ1コマ遅れる。写真が侵入、黄緑の帯、エラー。"""
-    a, mx, my, mm = render(st)
-    if t >= 4.5:
-        put_tile(a, ANOM_TILES[min(5, int((t - 4.5) / 0.5))], int(360 - min(1.0, (t - 4.5) / 0.2) * (360 - IX)))
-    if 5.3 <= t < 5.3 + 1 / FPS:
-        y = 300; a[y:y + 6] = YG; a[y + 6:y + 9] = np.roll(a[y + 6:y + 9], 12, 1)
-    if ERRORS[0][0] <= t < ERRORS[0][0] + ERRORS[0][1] / FPS:
-        a = with_error(a, 150, 205, np.random.default_rng(62))
-    if t >= 6.4:
-        a = np.roll(a, int(r.integers(-1, 2)), 1)
-        a[400:430] = np.roll(a[400:430], int(r.integers(-4, 5)), 1)
-    if t >= 6.85:                                          # 破損が噴き出して、切れる
-        B, *_ = render(st, variant=1)
-        a = slices(a, B, r, 10, 30, my + 40, my + 175, mx, mx + MC)
-        a = rgb_shift(block_glitch(a, r, 14), 4)
+def sc_tear(t, st, r, rs, t0, t1):
+    return fx_tear(t, st, r, rs, (t - t0) / (t1 - t0))
+
+
+def sc_calm2(t, st, r, rs, t0, t1):
+    a, *_ = render(st, icon=ANOM_TILES[-1])
+    if t >= t1 - 0.15: a = omen(a, r)
     return a
 
 
-def calm2(t, st, r, rs):
-    """7.0–9.5：何事もなかったように戻る。ただし写真が1枚アイコンとして残る。右目の瞬きが1コマ遅い。"""
-    st = dict(st)
-    a, mx, my, mm = render(st, icon=ANOM_TILES[-1])
-    if blinking(t) != blinking(t, 1 / 12):                 # 片目だけ開いている/閉じているコマ
-        m2 = mascot(st['scale'], st['edx'], st['edy'], 0, blinking(t, 1 / 12))
-        half = np.asarray(m2)[:, 100:]
-        sub = a[my:my + MC, mx + 100:mx + MC]
-        msk = half[..., 3:] > 0
-        sub[:] = np.where(msk, half[..., :3], sub)
-    if t >= 9.2: a = omen(a, r)
-    return a
+def sc_swarm(t, st, r, rs, t0, t1):
+    return fx_swarm(t, st, r, rs, (t - t0) / (t1 - t0), max(0.0, t - CASCADE0))
 
 
-def invasion(t, st, r, rs):
-    """9.5–14.0：顔が裂けてBが覗く。右半分が1行おきにB。ウィンドウが残像を引いて増殖。"""
-    p = (t - T_INV) / (T_SWAP - T_INV)
-    A, mx, my, mm = render(st)
-    B, *_ = render(st, variant=1)
-    fy0 = my + 108 - 8 if p < 0.4 else my + 20
-    A = slices(A, B, rs, int(4 + 9 * p), int(10 + 24 * p), fy0, my + 175, mx, mx + MC)
-    if t > 11.5 and int(t * 6) % 3 == 0:
-        y0, y1, x0, x1 = my + 30, my + 170, 180, mx + MC
-        A[y0:y1:2, x0:x1] = B[y0:y1:2, x0:x1]
-    a = A
-    put_tile(a, ANOM_TILES[int(t * 4) % 6] if int(t * 12) % 5 else 2)
-    if int(t * 10) % 4 == 0:
-        dx = int(r.integers(3, 8))
-        a = bg_only(a, lambda z: rgb_shift(z, dx), mm, mx, my)
-        for _ in range(2):
-            y = int(r.integers(0, H)); a[y:y + 1] = CY if r.random() < .5 else MG
-    for te, nf in ERRORS[1:]:
-        if te <= t < te + nf / FPS:
-            er = np.random.default_rng(int(te * 10))
-            a = with_error(a, int(er.integers(20, 220)), int(er.integers(180, 460)), er)
-    if t >= 13.5:
-        k = (t - 13.5) / 0.5
-        a = slices(a, B, r, int(4 + 14 * k), int(10 + 40 * k), 0, H)
-        a = block_glitch(a, r, int(4 + 16 * k))
-    if t >= 13.9:
-        a = crush(rgb_shift(a, 8), 10)
-    return a
-
-
-def swap(t, st, r, rs):
-    """14.0–15.5：整った静かな画面に、Bが何食わぬ顔で座っている。窓は2枚、文字は全部読める。"""
+def sc_swap(t, st, r, rs, t0, t1):
     a, *_ = render(st, variant=1)
     return a
 
 
-def rampage(t, st, r, rs):
-    """15.5–20.5：拡大縮小3往復。写真、JPEG劣化、帯の反転、赤紫のデュオトーン、文字の雨。"""
-    if RAMP_QUIET[0] <= t < RAMP_QUIET[1]:                 # B単独の静かな3フレーム
-        a, *_ = render(st, variant=1, show_windows=False)
-        return a
-    u = t - T_RAMP
-    heat = max(0.0, (t - 19.7) / 0.8)
+def sc_rampage(t, st, r, rs, t0, t1):
+    if in_quiet(t):
+        return render(st, variant=1, show_windows=False)[0]
+    a = fx_rampage(t, st, r, rs, (t - t0) / (t1 - t0))
+    for d0, d1 in DUOTONE:
+        if d0 <= t < d1: a = duotone(a, DUO_DARK, DUO_LIGHT)
+    return a
+
+
+def sc_freeze(t, st, r, rs, t0, t1):
+    """止まる。ただし窓も写真も化けた文字も残ったまま。"""
+    a, *_ = render(st, icon=ANOM_TILES[-1])
+    return a
+
+
+def sc_melt(t, st, r, rs, t0, t1):
+    return fx_melt(t, st, r, rs, (t - t0) / (t1 - t0))
+
+
+def sc_half(t, st, r, rs, t0, t1):
+    """左半分がA、右半分がB。静かに座っている。"""
     A, mx, my, mm = render(st)
     B, *_ = render(st, variant=1)
-    A = slices(A, B, rs, 10, 36, my + 20, my + 175, mx, mx + MC)
-    A[my + 30:my + 170:2, 180:mx + MC] = B[my + 30:my + 170:2, 180:mx + MC]
-    a = zoom(A, 1 + 0.7 * math.sin(math.pi * u / (5 / 3)) ** 2, 180, 360)
-    slot = int(u * 3)                                      # 写真の切替は1/3秒単位（毎秒3回以下）
-    ps = np.random.default_rng(700 + slot)
-    q = ps.random() if slot else 0.65
-    i, j, mode = int(ps.integers(NFRAG)), int(ps.integers(NFRAG)), int(ps.integers(4))
-    if 0.6 <= q < 0.75:
-        a = frag_full(i, mode).copy()
-    elif 0.75 <= q < 0.9:
-        ys = int(ps.integers(200, 440))
-        a[:ys] = frag_full(i, mode)[:ys]; a[ys:] = frag_full(j, (mode + 1) % 4)[ys:]
-    elif q >= 0.9:
-        y0 = int(ps.integers(60, 420))
-        a[y0:y0 + 200] = frag_full(i, mode)[y0:y0 + 200]
-    im = Image.fromarray(a)
-    c = [CRASH[int(rs.integers(5))], CRASH[int(rs.integers(5))]]  # 1コマに事故色は2色まで
-    for k in range(14):                                    # 文字の雨
-        if rs.random() < 0.4: continue
-        rk = np.random.default_rng(k + 50)
-        y = int((rk.random() * 700 + (150 + 250 * rk.random()) * u) % 720) - 40
-        sc = 2 if k % 3 == 0 else 1
-        for n_ in range(2):
-            stamp(im, 8 + k * 25, y + n_ * G * sc, int(rs.integers(NPSEUDO)), c[k % 2], scale=sc)
-    if rs.random() < 0.35:
-        error_box(im, int(rs.integers(10, 230)), int(rs.integers(60, 540)), rs)
-    a = np.asarray(im).copy()
-    for _ in range(int(rs.integers(1, 3))):                # 帯の反転（面積は小さく）
-        y0, hb = int(rs.integers(0, H - 30)), int(rs.integers(6, 30))
-        a[y0:y0 + hb] = 255 - a[y0:y0 + hb]
-    a = block_glitch(a, r, int(6 + heat * 20))
-    for _ in range(int(3 + heat * 14)):
-        y, h = int(r.integers(0, H)), int(r.integers(2, 18))
-        a[y:y + h] = np.roll(a[y:y + h], int(r.integers(-12 - int(heat * 40), 13 + int(heat * 40))), 1)
+    A[my:my + MC, 180:mx + MC] = B[my:my + MC, 180:mx + MC]
+    return A
+
+
+def sc_climax(t, st, r, rs, t0, t1):
+    """これまでの破壊が、短く速く、全部戻ってくる。"""
+    if in_quiet(t):
+        return render(st, variant=1, show_windows=False)[0]
+    if is_snap(t):
+        st = dict(st, sway=0)
+        return render(st)[0]
+    for m0, m1, mode in CLIMAX:
+        if m0 <= t < m1: break
+    u = (t - m0) / (m1 - m0)
+    if mode == 'tear': a = fx_tear(t, st, r, rs, 0.5 + 0.5 * u, 1.3)
+    elif mode == 'swarm': a = fx_swarm(t, st, r, rs, 0.5 + 0.5 * u, 1.0 + u, 1.3)
+    elif mode == 'rampage': a = fx_rampage(t, st, r, rs, u, 1.3, photos=False)
+    elif mode == 'melt': a = fx_melt(t, st, r, rs, 0.3 + 0.6 * u, 1.2)
+    else:                                                   # 最大：全部重ねる
+        a = fx_rampage(t, st, r, rs, u, 1.6, photos=False)
+        a = melt_fx(a, 80 + 200 * u)
+        B, *_ = render(st, variant=1)
+        a = slices(a, B, r, 20, 90, 0, H)
+        a = rgb_shift(a, int(10 + 10 * u))
+    if mode in ('rampage', 'max'):
+        a = photo_pass(a, t, 0.55)
     for d0, d1 in DUOTONE:
-        if d0 <= t < d1: a = duotone(a, PU, RD)
-    if rs.random() < 0.7:
-        a = crush(a, 8 + int(rs.integers(0, 20)))
-    return rgb_shift(a, int(2 + heat * 8))
+        if d0 <= t < d1: a = duotone(a, DUO_DARK, DUO_LIGHT)
+    return a
 
 
-def collapse(t, st, r, rs):
-    """20.5–21.0：縦に潰れて横線、横線が縮んで点、点が無音の間のマスコットになる。"""
-    u = (t - T_COLL) / 0.5
+def sc_collapse(t, st, r, rs, t0, t1):
+    """縦に潰れて横線、横線が縮んで点、点が無音の間のマスコットになる。"""
+    u = (t - t0) / (t1 - t0)
     a = PAPER_WHITE.copy()
     cy = 360
     if u < 0.5:
-        src = rampage(t, st, r, rs)
+        src = sc_climax(20.8 + u, state(20.8 + u), r, rs, 16.0, 21.5)
         hh = max(1, int(320 * (1 - u / 0.5) ** 2))
         idx = np.linspace(0, H - 1, 2 * hh).astype(int)
         band = src[idx].astype(float) * (1 - u) + 250 * u
@@ -753,13 +951,14 @@ def _silence(blink):
     return np.asarray(img.convert('RGB')).copy()
 
 
-def silence(t, st, r, rs):
-    """21.0–23.5：白に近い紙に小さなマスコット1体。完全静止、一度だけ瞬く。"""
+def sc_silence(t, st, r, rs, t0, t1):
     return _silence(blinking(t)).copy()
 
 
-def ret(t, st, r, rs):
-    """23.5–29.9：冒頭と同じ画面。ただし窓が2枚、目が2px横、5文字目が化けたまま。"""
+def sc_ret(t, st, r, rs, t0, t1):
+    """冒頭と同じ画面。ただし窓2枚、目が2px横、5文字目が化けたまま。途中で一度だけ余震。"""
+    if AFTERSHOCK[0] <= t < AFTERSHOCK[1]:
+        return fx_tear(t, st, r, rs, 0.9, 1.2)
     a, mx, my, mm = render(st)
     if t >= 29.4:
         a = omen(a, r)
@@ -769,20 +968,26 @@ def ret(t, st, r, rs):
     return a
 
 
-SCENES = [(T_RET, ret), (T_SIL, silence), (T_COLL, collapse), (T_RAMP, rampage), (T_SWAP, swap),
-          (T_INV, invasion), (T_CALM2, calm2), (T_ANOM, anomaly), (0.0, calm1)]
+SCENES = {'calm1': sc_calm1, 'tear': sc_tear, 'calm2': sc_calm2, 'swarm': sc_swarm, 'swap': sc_swap,
+          'rampage': sc_rampage, 'freeze': sc_freeze, 'melt': sc_melt, 'half': sc_half, 'climax': sc_climax,
+          'collapse': sc_collapse, 'silence': sc_silence, 'ret': sc_ret}
 
 
 def frame(f):
-    t = f / FPS
     if f < 3: return hook(f)
     if f >= NF - 3: return hook(f - (NF - 3))
+    t = f / FPS
+    if is_stutter(t):                                      # 0.1秒の頭のコマで引っかかる
+        f = int(t * 10) * 3
+        t = f / FPS
+    name, t0, t1 = seg(t)
+    if name == 'tear' and is_snap(t):                      # 破壊の途中で一瞬だけ静に戻る
+        st = state(t); st['sway'] = 0
+        return render(st)[0]
     st = state(t)
     r = np.random.default_rng(f * 17 + 3)
     rs = np.random.default_rng(int(t * 12) * 11 + 1)      # 12fps相当で保持する乱数
-    for t0, fn in SCENES:
-        if t >= t0:
-            return fn(t, st, r, rs)
+    return SCENES[name](t, st, r, rs, t0, t1)
 
 
 # ---------------------------------------------------------------- 仕上げ
@@ -809,17 +1014,18 @@ def finish(a):
 def audio(path):
     n = int(SR * DUR)
     tt = np.arange(n) / SR
-    L = np.zeros(n)
-    R = np.zeros(n)
     rng = np.random.default_rng(7)
+    L, R = np.zeros(n), np.zeros(n)            # 静の層（ハム、クリック）
+    DL, DR = np.zeros(n), np.zeros(n)          # 破壊の層（破壊中だけ鳴り、静に戻る瞬間に切れる）
 
-    def add(t0, sig, pan=0.0, g=1.0):
+    def add(buf, t0, sig, pan=0.0, g=1.0):
+        bl, br = buf
         i = int(t0 * SR)
-        if i >= n:
+        if i >= n or i < 0:
             return
         s = sig[:n - i] * g
-        L[i:i + len(s)] += s * (1 - max(0, pan))
-        R[i:i + len(s)] += s * (1 + min(0, pan))
+        bl[i:i + len(s)] += s * (1 - max(0, pan))
+        br[i:i + len(s)] += s * (1 + min(0, pan))
 
     def env(d, a=0.002, r=None):
         k = np.arange(int(d * SR)) / SR
@@ -827,13 +1033,11 @@ def audio(path):
         return e * (np.exp(-k / r) if r else 1)
 
     def sq(f, d):
-        k = np.arange(int(d * SR)) / SR
-        return np.sign(np.sin(2 * np.pi * f * k))
+        return np.sign(np.sin(2 * np.pi * f * np.arange(int(d * SR)) / SR))
 
     def sweep(f0, f1, d, wave="sq"):
         k = np.arange(int(d * SR)) / SR
-        f = f0 * (f1 / f0) ** (k / d)
-        ph = 2 * np.pi * np.cumsum(f) / SR
+        ph = 2 * np.pi * np.cumsum(f0 * (f1 / f0) ** (k / d)) / SR
         return np.sign(np.sin(ph)) if wave == "sq" else np.sin(ph)
 
     def crushed_noise(d, hold=24, bits=3):
@@ -842,88 +1046,102 @@ def audio(path):
         q = 2 ** bits
         return np.round(x * q) / q
 
-    # 床：ハムとヒス。入れ替わりの間だけ少し低く濁る
-    f = np.where((tt >= T_SWAP) & (tt < T_RAMP), 55.0, 60.0)
+    S, D = (L, R), (DL, DR)
+
+    # マスク（12fps単位で映像と同じ判定を使う）
+    slot_t = np.arange(int(DUR * 120)) / 120
+    dm = np.array([destroying(x) for x in slot_t], float).repeat(SR // 120)[:n]
+    names = [seg(x)[0] for x in slot_t]
+    sil = np.array([nm in ('silence', 'collapse') for nm in names], float).repeat(SR // 120)[:n]
+    quiet = np.array([in_quiet(x) for x in slot_t], float).repeat(SR // 120)[:n]
+
+    # 床：ハム。入れ替わりの場面では低く濁る。破壊中は奥に沈む
+    f = np.array([55.0 if nm == 'swap' else 52.0 if nm == 'half' else 60.0 for nm in names]).repeat(SR // 120)[:n]
     ph = 2 * np.pi * np.cumsum(f) / SR
     hum = 0.05 * np.sin(ph) + 0.03 * np.sin(2 * ph) + 0.008 * rng.normal(0, 1, n)
-    trem = np.where((tt >= T_SWAP) & (tt < T_RAMP), 0.75 + 0.25 * np.sin(2 * np.pi * 3 * tt), 1.0)
-    hum_env = np.where(tt < T_RAMP, 1.0, 0.0) + np.where(tt >= T_RET, 1.0, 0.0)
-    hum_env = hum_env * np.where((tt >= T_INV) & (tt < T_SWAP), 1.3, 1.0)
-    fade = np.clip((tt - T_RET) / 0.03, 0, 1)
-    hum_env = np.where(tt >= T_RET, fade, hum_env)
-    omen_ = ((tt >= 3.5) & (tt < 4.0)) | ((tt >= 9.2) & (tt < 9.5)) | ((tt >= 29.4) & (tt < T_LOOP))
-    h = hum * trem * hum_env
-    h = np.where(omen_, np.clip(h * 4, -0.09, 0.09), h)            # 予兆で歪む
-    L += h
-    R += h
+    hum *= np.where(dm > 0, 0.35, 1.0) * (1 - sil) * (1 - quiet)
+    hum *= np.clip((tt - 23.8) / 0.03, 0, 1) * (tt >= 23.8) + (tt < 23.8)          # 帰還は30msで復帰
+    omen_ = ((tt >= 2.1) & (tt < 2.4)) | ((tt >= 4.25) & (tt < 4.4)) | ((tt >= 29.4) & (tt < T_LOOP))
+    hum = np.where(omen_, np.clip(hum * 4, -0.09, 0.09), hum)
+    L += hum; R += hum
 
-    # フック / ループ繋ぎ：ビットクラッシュの轟音
-    roar = (crushed_noise(T_HOOK) * 0.6 + 0.35 * sq(45, T_HOOK)) * env(T_HOOK, 0.001)
-    add(0.0, roar)
-    add(T_LOOP, roar[:int((DUR - T_LOOP) * SR)])
+    # フック / ループ繋ぎ
+    roar = (crushed_noise(0.1) * 0.6 + 0.35 * sq(45, 0.1)) * env(0.1, 0.001)
+    add(S, 0.0, roar); add(S, T_LOOP, roar)
 
-    # 進行クリック
     click = (rng.uniform(-1, 1, int(0.004 * SR)) * 0.5 + np.sin(2 * np.pi * 2200 * np.arange(int(0.004 * SR)) / SR)) * env(0.004, 0.0003, 0.0012)
     for ts, _ in PROG:
-        add(ts, click, pan=-0.2, g=0.3)
+        add(S, ts, click, pan=-0.2, g=0.3)
+    add(S, 7.2, click, g=0.2)
 
-    # 第1の異変
-    blip = np.sin(2 * np.pi * 1200 * np.arange(int(0.06 * SR)) / SR) * env(0.06, 0.001, 0.02)
-    add(4.5, blip, pan=0.4, g=0.3)
-    for k in range(1, 5):
-        add(4.5 + k * 0.5, click, pan=0.5, g=0.18)                  # 写真が切り替わる小さな音
-    add(5.3, sweep(3000, 7000, 0.035, "sin") * env(0.035, 0.001), g=0.25)
+    # 破壊の層：0.1秒（全壊の後半は0.05秒）グリッドのスタッター
+    gain = {'tear': 0.34, 'swarm': 0.32, 'rampage': 0.42, 'melt': 0.36, 'climax': 0.45}
+    for t0, t1, nm in SEGS:
+        if nm not in DESTROY: continue
+        t = t0
+        while t < t1 - 1e-6:
+            u = (t - t0) / (t1 - t0)
+            step = 0.05 if (nm == 'climax' and u > 0.5) else 0.1
+            q = rng.random()
+            if q < 0.4:
+                s = crushed_noise(step, int(rng.integers(4, 40)), int(rng.integers(2, 4)))
+            elif q < 0.75:
+                s = sq(float(rng.uniform(80, 2000)), step) * 0.6
+            elif q < 0.92:
+                s = sweep(float(rng.uniform(200, 3000)), float(rng.uniform(60, 3000)), step) * 0.6
+            else:
+                s = np.zeros(int(step * SR))
+            add(D, t, s * env(step, 0.001), pan=float(rng.uniform(-0.6, 0.6)), g=gain[nm] * (1 + 0.4 * u))
+            t += step
+    # 破壊1：衝撃と裂けるクラックル、エラー
+    add(D, 2.4, np.sin(2 * np.pi * np.cumsum(np.linspace(120, 30, int(0.25 * SR))) / SR) * env(0.25, 0.001, 0.12), g=0.6)
+    for ts in np.arange(2.4, 3.6, 1 / 500):
+        if rng.random() < 0.35:
+            add(D, ts, rng.uniform(-1, 1, 96) * np.exp(-np.arange(96) / 20), pan=rng.uniform(-0.7, 0.7), g=rng.uniform(0.15, 0.45))
     err = np.concatenate([sq(880, 0.09) * env(0.09, 0.002), sq(660, 0.12) * env(0.12, 0.002, 0.08)])
     for te, _ in ERRORS:
-        add(te, err, g=0.16)
-    add(6.85, crushed_noise(0.15, 12, 2) * env(0.15, 0.001), g=0.4)
+        add(D, te, err, g=0.2)
+    # 破壊2：窓が湧くたびのブリップ、エラー連鎖の音
+    for (ts, x, y, sty, v) in SWARM:
+        add(D, ts, sq(1400 + 60 * sty, 0.03) * env(0.03, 0.001, 0.01), pan=(x - 70) / 200, g=0.18)
+    for i in range(0, int((6.8 - CASCADE0) * 22), 3):
+        add(D, CASCADE0 + i / 22, sq(880 if (i // 3) % 2 == 0 else 660, 0.05) * env(0.05, 0.001, 0.03), g=0.14)
+    # 破壊3：拡大縮小に同期した48Hz
+    m = (tt >= 7.6) & (tt < 11.6)
+    DL[m] += (0.35 * np.sin(2 * np.pi * 48 * tt) * np.sin(np.pi * (tt - 7.6) / 4.0 * 3) ** 2)[m]
+    DR[m] += (0.35 * np.sin(2 * np.pi * 48 * tt) * np.sin(np.pi * (tt - 7.6) / 4.0 * 3) ** 2)[m]
+    # 破壊4：落ちていくドローン
+    d = 3.0
+    wob = np.sin(2 * np.pi * np.cumsum(220 * (30 / 220) ** (np.arange(int(d * SR)) / SR / d) * (1 + 0.04 * np.sin(2 * np.pi * 5 * np.arange(int(d * SR)) / SR))) / SR)
+    add(D, 12.0, np.sign(wob) * 0.5 + wob * 0.3, g=0.35)
+    # 破壊5：8Hzで刻む40Hz
+    m = (tt >= 16.0) & (tt < 21.5)
+    pul = 0.4 * np.sin(2 * np.pi * 40 * tt) * (0.5 + 0.5 * np.sign(np.sin(2 * np.pi * 8 * tt))) * np.clip((tt - 16.0) / 5.5 + 0.4, 0, 1.4)
+    DL[m] += pul[m]; DR[m] += pul[m]
+    # 余震
+    add(D, AFTERSHOCK[0], crushed_noise(0.1, 6, 2) * env(0.1, 0.001), g=0.6)
 
-    # 侵入：増殖の降下音、裂けるクラックル
-    for k, ts in enumerate(SPAWNS):
-        add(ts, sweep(1400 * 0.85 ** k, 300 * 0.85 ** k, 0.35) * env(0.35, 0.002, 0.2), pan=-0.3 + 0.2 * k, g=0.16)
-    for ts in np.arange(T_INV, T_SWAP, 1 / 400):
-        d = (ts - T_INV) / (T_SWAP - T_INV)
-        if rng.random() < 0.04 + 0.4 * d * d:
-            imp = rng.uniform(-1, 1, 96) * np.exp(-np.arange(96) / 20)
-            add(ts, imp, pan=rng.uniform(-0.6, 0.6), g=rng.uniform(0.1, 0.4))
-    add(13.9, crushed_noise(0.1, 8, 2) * env(0.1, 0.001), g=0.5)
+    # 音の引っかかり：映像と同じ0.1秒で、頭の20msを繰り返す
+    for k in range(int(DUR * 10)):
+        tk = k / 10
+        if is_stutter(tk + 0.001):
+            i0 = int(tk * SR); ln = int(0.02 * SR)
+            for buf in (DL, DR):
+                buf[i0:i0 + int(0.1 * SR)] = np.tile(buf[i0:i0 + ln], 5)[:len(buf[i0:i0 + int(0.1 * SR)])]
 
-    # 入れ替わり：低いポップと、Bの瞬きに1回だけクリック
-    add(T_SWAP, np.sin(2 * np.pi * 80 * np.arange(int(0.08 * SR)) / SR) * env(0.08, 0.001, 0.03), g=0.35)
-    add(15.0, click, g=0.2)
-
-    # 暴走：0.1秒グリッドのスタッターと、拡大縮小に同期した48Hz
-    for ci in range(int((T_COLL - T_RAMP) * 10)):
-        ts = T_RAMP + ci * 0.1
-        if RAMP_QUIET[0] - 0.05 <= ts < RAMP_QUIET[1]:
-            continue
-        heat = max(0.0, (ts - 19.7) / 0.8)
-        r = rng.random()
-        if r < 0.4:
-            s = crushed_noise(0.1, int(rng.integers(6, 40)), int(rng.integers(2, 4)))
-        elif r < 0.8:
-            s = sq(float(rng.uniform(100, 1600)), 0.1) * 0.6
-        else:
-            continue
-        add(ts, s * env(0.1, 0.002), pan=float(rng.uniform(-0.5, 0.5)), g=0.28 + 0.15 * heat)
-    m = (tt >= T_RAMP) & (tt < T_COLL) & ~((tt >= RAMP_QUIET[0]) & (tt < RAMP_QUIET[1]))
-    bass = 0.35 * np.sin(2 * np.pi * 48 * tt) * np.sin(np.pi * (tt - T_RAMP) / (5 / 3)) ** 2
-    L += np.where(m, bass, 0)
-    R += np.where(m, bass, 0)
+    L += DL * dm; R += DR * dm
 
     # 崩落：テープが止まるように落ちる
-    d = T_SIL - T_COLL
+    d = 0.5
     stop = (sweep(300, 20, d) * 0.6 + crushed_noise(d, 16, 3) * 0.4) * np.linspace(1, 0, int(d * SR)) ** 1.5
-    add(T_COLL, stop, g=0.4)
+    add(S, 21.5, stop, g=0.45)
 
-    # 無音の間：完全にゼロ
-    L[(tt >= T_SIL) & (tt < T_RET)] = 0
-    R[(tt >= T_SIL) & (tt < T_RET)] = 0
-    L[(tt >= RAMP_QUIET[0]) & (tt < RAMP_QUIET[1])] = 0
-    R[(tt >= RAMP_QUIET[0]) & (tt < RAMP_QUIET[1])] = 0
+    # 無音の間とB単独のコマは完全にゼロ
+    z = ((tt >= 22.0) & (tt < 23.8)) | (quiet > 0)
+    L[z] = 0; R[z] = 0
 
     peak = max(np.abs(L).max(), np.abs(R).max())
-    st = np.stack([L, R], 1) * (0.89 / peak)
+    st = np.stack([L, R], 1) * (0.63 / peak)          # 約-14 LUFS（ショート動画の配信基準付近）
     with wave.open(path, "wb") as w:
         w.setnchannels(2)
         w.setsampwidth(2)
@@ -938,7 +1156,7 @@ def video(out):
     cmd = [FFMPEG, "-y", "-loglevel", "error",
            "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W * UP}x{H * UP}", "-r", str(FPS), "-i", "-",
            "-i", wav,
-           "-c:v", "libx264", "-profile:v", "high", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+           "-c:v", "libx264", "-profile:v", "high", "-crf", os.environ.get("CRF", "20"), "-preset", "medium", "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", out]
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
     for fi in range(NF):
@@ -966,7 +1184,7 @@ def preview(times):
 
 if __name__ == "__main__":
     if len(sys.argv) >= 2 and sys.argv[1] == "preview":
-        preview(sys.argv[2:] or ["0", "1.0", "5.3", "10.5", "14.5", "17.0", "22.0", "26.0"])
+        preview(sys.argv[2:] or ["0", "1.0", "3.0", "5.5", "9.0", "13.5", "18.0", "26.0"])
     elif len(sys.argv) >= 3 and sys.argv[1] == "video":
         video(sys.argv[2])
     else:
