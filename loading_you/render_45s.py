@@ -877,6 +877,9 @@ def _load_crops():
         im = Image.open(f).convert("RGB")
         if c.get("box"):
             im = im.crop(tuple(c["box"]))
+        elif c.get("rbox"):                                  # 比率で書いた切り抜き範囲
+            x0, y0, x1, y1 = c["rbox"]
+            im = im.crop((int(x0 * im.width), int(y0 * im.height), int(x1 * im.width), int(y1 * im.height)))
         out.setdefault(c["kind"], []).append((im, c))
     return out
 
@@ -899,7 +902,7 @@ def cut(kind, i, w, h, mask=None):
         al = (((xx - w / 2 + 0.5) / (w / 2)) ** 2 + ((yy - h / 2 + 0.5) / (h / 2)) ** 2) < 1
     elif mask == "ink":
         lum = a.mean(2)
-        al = lum < min(170, np.percentile(lum, 55) * 0.85)
+        al = lum < min(150, np.median(lum) - 48)            # 紙の明るさより十分に暗いところだけを線とみなす
     elif mask == "subject":
         border = np.concatenate([a[0], a[-1], a[:, 0], a[:, -1]])
         al = np.abs(a - np.median(border, 0)).sum(2) > c.get("thr", 70)
@@ -989,6 +992,11 @@ def _eyes_pair():
 
 
 EYES_PAIR = _eyes_pair()
+if has('eyes'):                                              # 写真から切り取った両目
+    EYES_PAIRS = [cut('eyes', i, SEL[2] - SEL[0], SEL[3] - SEL[1])[..., :3].copy() for i in range(n_of('eyes'))]
+    EYES_PAIR = EYES_PAIRS[0]
+else:
+    EYES_PAIRS = [EYES_PAIR]
 
 
 def _flower_field():
@@ -1462,7 +1470,9 @@ def tunnel(A, B, u):
     """画面の中に画面が入れ子になって、無限に吸い込まれる。AとBが交互に出る。"""
     s = 0.64
     img = A.copy()
+    ma = A.mean()
     layers = [A, CORR_FULL, B, LAND_FULL]                   # A、廊下、B、風景が交互に入れ子になる
+    layers = [np.clip(l.astype(float) * (ma / max(1.0, l.mean())), 0, 255).astype(np.uint8) for l in layers]   # 層ごとの明るさを揃える（明滅させない）
     for k in range(9, 0, -1):
         sc = s ** k
         w, h = max(2, int(W * sc)), max(2, int(H * sc))
@@ -1474,7 +1484,7 @@ def tunnel(A, B, u):
         for d in range(2 if w > 40 else 1):                 # 入れ子の縁
             img[y0 + d, x0:x0 + w] = FRAME; img[y0 + h - 1 - d, x0:x0 + w] = FRAME
             img[y0:y0 + h, x0 + d] = FRAME; img[y0:y0 + h, x0 + w - 1 - d] = FRAME
-    z = (1 / s) ** ((u * 2.5) % 1.0)
+    z = (1 / s) ** ((u * 1.5) % 1.0)
     return zoom(img, z, 180, CY_M)
 
 
@@ -1767,7 +1777,7 @@ def sc_ui(t, st, r, rs, t0, t1):
     ph, pw = eye_patch().shape[:2]
     for k, ts in enumerate(PASTE_TS):                       # 貼り付けた目は消えない。3回目からは人間の目に変わる
         if t >= ts:
-            ep = eye_patch() if k < 2 else EYES_PAIR
+            ep = eye_patch() if k < 2 else EYES_PAIRS[k % len(EYES_PAIRS)]
             x, y = PASTES[k]
             x0, y0, x1, y1 = max(0, x), max(0, y), min(W, x + pw), min(H, y + ph)
             a[y0:y1, x0:x1] = ep[y0 - y:y1 - y, x0 - x:x1 - x]
@@ -2179,6 +2189,10 @@ def src_img(name, t, cache):
             cache[name] = with_eyeball(render(st, variant=1)[0], st)
         elif name == 'water': cache[name] = water_full(int(t * 12))
         elif name in PHOTO_SRC: cache[name] = up(cut(name, 0, 90, 160)[..., :3], 4)
+        elif name == 'sphere':                               # 風景を映す鏡の球
+            img = np.full((H, W, 3), (40, 34, 30), np.uint8)
+            paste_rgba(img, up(cut('sphere', 0, 120, 160), 2), 108 - 120, 210 - 160)
+            cache[name] = img
         else: cache[name] = {'land': LAND_FULL, 'build': BUILD_FULL, 'corr': CORR_FULL, 'eyes': EYE_WALL,
                              'flowers': FLOWER_FIELD, 'text': TEXT_FIELD}[name]
     return cache[name]
@@ -2206,7 +2220,7 @@ def collage_strips(t, u):
     return o
 
 
-SHAPES = [(0.05, 'arch', 'corr', 180, 430, 150), (0.25, 'circle', 'land', 108, 210, 110), (0.45, 'tri', 'build', 272, 300, 130),
+SHAPES = [(0.05, 'arch', 'corr', 180, 430, 150), (0.25, 'circle', 'sphere' if has('sphere') else 'land', 108, 210, 110), (0.45, 'tri', 'build', 272, 300, 130),
           (0.65, 'circle', 'eyeball', 250, 480, 72), (0.85, 'rect', 'water', 116, 520, 92),
           (1.05, 'circle', 'instrument' if has('instrument') else 'flowers', 190, 130, 96)]
 

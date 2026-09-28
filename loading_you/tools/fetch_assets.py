@@ -264,7 +264,10 @@ def main():
                         data = get(c["image_url"], binary=True)
                     except Exception as e:
                         print(f"  画像を取得できませんでした: {c['image_url']} ({e})", file=sys.stderr); continue
-                    im = Image.open(io.BytesIO(data)).convert("RGB")
+                    try:
+                        im = Image.open(io.BytesIO(data)).convert("RGB")
+                    except Exception:
+                        print(f"  画像として読めませんでした: {c['image_url']}", file=sys.stderr); continue
                     h = ahash(im)
                     if any((h != x).sum() < 10 for x in hashes):
                         continue                            # ほぼ同じ見た目の画像は1枚だけ

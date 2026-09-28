@@ -1,0 +1,634 @@
+[
+ {
+  "file": "wellcome/ycbgbwtb.jpg",
+  "kind": "eye",
+  "mask": "ellipse",
+  "rbox": [
+   0.04,
+   0.37,
+   0.21,
+   0.47
+  ]
+ },
+ {
+  "file": "wellcome/ycbgbwtb.jpg",
+  "kind": "eye",
+  "mask": "ellipse",
+  "rbox": [
+   0.73,
+   0.37,
+   0.91,
+   0.47
+  ]
+ },
+ {
+  "file": "wellcome/gxfda2b6.jpg",
+  "kind": "eye",
+  "mask": "ellipse",
+  "rbox": [
+   0.2,
+   0.355,
+   0.26,
+   0.41
+  ]
+ },
+ {
+  "file": "wellcome/d8hqbnmt.jpg",
+  "kind": "eye",
+  "mask": "ellipse",
+  "rbox": [
+   0.6,
+   0.31,
+   0.84,
+   0.46
+  ]
+ },
+ {
+  "file": "wellcome/d8hqbnmt.jpg",
+  "kind": "eye",
+  "mask": "ellipse",
+  "rbox": [
+   0.2,
+   0.33,
+   0.45,
+   0.47
+  ]
+ },
+ {
+  "file": "wellcome/ycbgbwtb.jpg",
+  "kind": "eye",
+  "mask": "ellipse",
+  "rbox": [
+   0.5,
+   0.18,
+   0.68,
+   0.28
+  ]
+ },
+ {
+  "file": "wellcome/ycbgbwtb.jpg",
+  "kind": "eye",
+  "mask": "ellipse",
+  "rbox": [
+   0.27,
+   0.75,
+   0.45,
+   0.84
+  ]
+ },
+ {
+  "file": "wellcome/gxfda2b6.jpg",
+  "kind": "eyes",
+  "mask": "rect",
+  "rbox": [
+   0.195,
+   0.355,
+   0.335,
+   0.415
+  ]
+ },
+ {
+  "file": "wellcome/we7v9vcw.jpg",
+  "kind": "eyes",
+  "mask": "rect",
+  "rbox": [
+   0.17,
+   0.345,
+   0.33,
+   0.405
+  ]
+ },
+ {
+  "file": "wellcome/gxfda2b6.jpg",
+  "kind": "eyes",
+  "mask": "rect",
+  "rbox": [
+   0.63,
+   0.355,
+   0.77,
+   0.415
+  ]
+ },
+ {
+  "file": "wellcome/d8hqbnmt.jpg",
+  "kind": "eyeball",
+  "mask": "ellipse",
+  "rbox": [
+   0.655,
+   0.35,
+   0.755,
+   0.43
+  ]
+ },
+ {
+  "file": "wellcome/gxfda2b6.jpg",
+  "kind": "mouth",
+  "mask": "ellipse",
+  "rbox": [
+   0.215,
+   0.475,
+   0.31,
+   0.535
+  ]
+ },
+ {
+  "file": "wellcome/we7v9vcw.jpg",
+  "kind": "mouth",
+  "mask": "ellipse",
+  "rbox": [
+   0.205,
+   0.465,
+   0.3,
+   0.535
+  ]
+ },
+ {
+  "file": "wellcome/gxfda2b6.jpg",
+  "kind": "face",
+  "mask": "rect",
+  "rbox": [
+   0.12,
+   0.13,
+   0.43,
+   0.82
+  ]
+ },
+ {
+  "file": "loc/2006688328.jpg",
+  "kind": "face",
+  "mask": "rect",
+  "rbox": [
+   0.36,
+   0.28,
+   0.66,
+   0.56
+  ]
+ },
+ {
+  "file": "wellcome/fax658yx.jpg",
+  "kind": "face",
+  "mask": "rect",
+  "rbox": [
+   0.08,
+   0.2,
+   0.96,
+   0.62
+  ]
+ },
+ {
+  "file": "wellcome/hkg8xhe9.jpg",
+  "kind": "face",
+  "mask": "rect",
+  "rbox": [
+   0.05,
+   0.05,
+   0.95,
+   0.62
+  ]
+ },
+ {
+  "file": "loc/2004664223.jpg",
+  "kind": "face",
+  "mask": "rect",
+  "rbox": [
+   0.12,
+   0.08,
+   0.88,
+   0.92
+  ]
+ },
+ {
+  "file": "wellcome/ewanezfq.jpg",
+  "kind": "hand",
+  "mask": "rect",
+  "rbox": [
+   0.05,
+   0.03,
+   0.97,
+   0.97
+  ]
+ },
+ {
+  "file": "wellcome/bfrwyc62.jpg",
+  "kind": "hand",
+  "mask": "rect",
+  "rbox": [
+   0.0,
+   0.0,
+   1.0,
+   1.0
+  ]
+ },
+ {
+  "file": "wellcome/qjdk885g.jpg",
+  "kind": "hand",
+  "mask": "rect",
+  "rbox": [
+   0.02,
+   0.02,
+   0.5,
+   0.98
+  ]
+ },
+ {
+  "file": "wellcome/mt34bmv6.jpg",
+  "kind": "body",
+  "mask": "ink",
+  "rbox": [
+   0.03,
+   0.05,
+   0.97,
+   0.97
+  ]
+ },
+ {
+  "file": "wellcome/qgjyrpgm.jpg",
+  "kind": "body",
+  "mask": "ink",
+  "rbox": [
+   0.0,
+   0.0,
+   1.0,
+   1.0
+  ]
+ },
+ {
+  "file": "wellcome/gtp8yrz8.jpg",
+  "kind": "body",
+  "mask": "subject",
+  "rbox": [
+   0.0,
+   0.0,
+   1.0,
+   1.0
+  ],
+  "thr": 60
+ },
+ {
+  "file": "wellcome/tyxp4ep6.jpg",
+  "kind": "body",
+  "mask": "ink",
+  "rbox": [
+   0.0,
+   0.0,
+   1.0,
+   1.0
+  ]
+ },
+ {
+  "file": "wellcome/q2jr5egq.jpg",
+  "kind": "flower",
+  "mask": "subject",
+  "rbox": [
+   0.22,
+   0.06,
+   0.86,
+   0.62
+  ],
+  "thr": 90
+ },
+ {
+  "file": "wellcome/qhv5f8k3.jpg",
+  "kind": "flower",
+  "mask": "subject",
+  "rbox": [
+   0.25,
+   0.08,
+   0.85,
+   0.55
+  ],
+  "thr": 90
+ },
+ {
+  "file": "wellcome/vx8gtfe6.jpg",
+  "kind": "plant",
+  "mask": "rect",
+  "rbox": [
+   0.05,
+   0.05,
+   0.95,
+   0.95
+  ],
+  "thr": 80
+ },
+ {
+  "file": "wellcome/qfcmdc24.jpg",
+  "kind": "plant",
+  "mask": "ink",
+  "rbox": [
+   0.1,
+   0.1,
+   0.85,
+   0.95
+  ]
+ },
+ {
+  "file": "wellcome/m3tr27f2.jpg",
+  "kind": "plant",
+  "mask": "ink",
+  "rbox": [
+   0.1,
+   0.1,
+   0.85,
+   0.95
+  ]
+ },
+ {
+  "file": "wellcome/wsw47whn.jpg",
+  "kind": "plant",
+  "mask": "ink",
+  "rbox": [
+   0.05,
+   0.05,
+   0.95,
+   0.95
+  ]
+ },
+ {
+  "file": "wellcome/fr8m4q2e.jpg",
+  "kind": "plant",
+  "mask": "ink",
+  "rbox": [
+   0.0,
+   0.0,
+   1.0,
+   1.0
+  ]
+ },
+ {
+  "file": "loc/2018681284.jpg",
+  "kind": "plant",
+  "mask": "rect",
+  "rbox": [
+   0.05,
+   0.05,
+   0.95,
+   0.95
+  ]
+ },
+ {
+  "file": "loc/2020636166.jpg",
+  "kind": "plant",
+  "mask": "rect",
+  "rbox": [
+   0.05,
+   0.05,
+   0.95,
+   0.95
+  ]
+ },
+ {
+  "file": "loc/2024631119.jpg",
+  "kind": "landscape",
+  "mask": "rect",
+  "rbox": [
+   0.04,
+   0.04,
+   0.96,
+   0.88
+  ]
+ },
+ {
+  "file": "loc/2022650359.jpg",
+  "kind": "landscape",
+  "mask": "rect",
+  "rbox": [
+   0.04,
+   0.08,
+   0.48,
+   0.92
+  ]
+ },
+ {
+  "file": "loc/2016802125.jpg",
+  "kind": "water",
+  "mask": "rect",
+  "rbox": [
+   0.08,
+   0.05,
+   0.92,
+   0.95
+  ]
+ },
+ {
+  "file": "loc/97516274.jpg",
+  "kind": "water",
+  "mask": "rect",
+  "rbox": [
+   0.08,
+   0.04,
+   0.92,
+   0.96
+  ]
+ },
+ {
+  "file": "loc/2011646046.jpg",
+  "kind": "sphere",
+  "mask": "ellipse",
+  "rbox": [
+   0.17,
+   0.1,
+   0.48,
+   0.9
+  ]
+ },
+ {
+  "file": "loc/2016652090.jpg",
+  "kind": "building",
+  "mask": "rect",
+  "rbox": [
+   0.06,
+   0.03,
+   0.94,
+   0.97
+  ]
+ },
+ {
+  "file": "loc/2016820719.jpg",
+  "kind": "building",
+  "mask": "rect",
+  "rbox": [
+   0.04,
+   0.04,
+   0.96,
+   0.96
+  ]
+ },
+ {
+  "file": "wellcome/av6jnxw2.jpg",
+  "kind": "building",
+  "mask": "rect",
+  "rbox": [
+   0.0,
+   0.0,
+   1.0,
+   1.0
+  ]
+ },
+ {
+  "file": "wellcome/prwt8644.jpg",
+  "kind": "interior",
+  "mask": "rect",
+  "rbox": [
+   0.0,
+   0.0,
+   1.0,
+   1.0
+  ]
+ },
+ {
+  "file": "loc/2004679226.jpg",
+  "kind": "interior",
+  "mask": "rect",
+  "rbox": [
+   0.04,
+   0.03,
+   0.96,
+   0.97
+  ]
+ },
+ {
+  "file": "loc/2011634398.jpg",
+  "kind": "interior",
+  "mask": "rect",
+  "rbox": [
+   0.0,
+   0.0,
+   1.0,
+   1.0
+  ]
+ },
+ {
+  "file": "wellcome/guqmtzwk.jpg",
+  "kind": "instrument",
+  "mask": "subject",
+  "rbox": [
+   0.0,
+   0.0,
+   1.0,
+   1.0
+  ],
+  "thr": 70
+ },
+ {
+  "file": "wellcome/g4gkqkah.jpg",
+  "kind": "instrument",
+  "mask": "rect",
+  "rbox": [
+   0.0,
+   0.0,
+   1.0,
+   1.0
+  ]
+ },
+ {
+  "file": "wellcome/nkdgmmw2.jpg",
+  "kind": "instrument",
+  "mask": "ink",
+  "rbox": [
+   0.03,
+   0.03,
+   0.97,
+   0.97
+  ]
+ },
+ {
+  "file": "wellcome/srtaj39m.jpg",
+  "kind": "instrument",
+  "mask": "ink",
+  "rbox": [
+   0.03,
+   0.03,
+   0.97,
+   0.97
+  ]
+ },
+ {
+  "file": "wellcome/b8hdyrzt.jpg",
+  "kind": "diagram",
+  "mask": "rect",
+  "rbox": [
+   0.03,
+   0.03,
+   0.97,
+   0.97
+  ]
+ },
+ {
+  "file": "wellcome/eq5vfm79.jpg",
+  "kind": "diagram",
+  "mask": "rect",
+  "rbox": [
+   0.03,
+   0.03,
+   0.97,
+   0.97
+  ]
+ },
+ {
+  "file": "wellcome/ftgnxuqk.jpg",
+  "kind": "diagram",
+  "mask": "rect",
+  "rbox": [
+   0.03,
+   0.03,
+   0.97,
+   0.97
+  ]
+ },
+ {
+  "file": "wellcome/dbjrmpep.jpg",
+  "kind": "print",
+  "mask": "rect",
+  "rbox": [
+   0.03,
+   0.03,
+   0.97,
+   0.97
+  ]
+ },
+ {
+  "file": "wellcome/yzzm4hxx.jpg",
+  "kind": "print",
+  "mask": "rect",
+  "rbox": [
+   0.03,
+   0.03,
+   0.97,
+   0.97
+  ]
+ },
+ {
+  "file": "wellcome/m63nufty.jpg",
+  "kind": "print",
+  "mask": "rect",
+  "rbox": [
+   0.03,
+   0.03,
+   0.97,
+   0.97
+  ]
+ },
+ {
+  "file": "loc/2015646251.jpg",
+  "kind": "print",
+  "mask": "rect",
+  "rbox": [
+   0.03,
+   0.03,
+   0.97,
+   0.97
+  ]
+ },
+ {
+  "file": "wellcome/gxfda2b6.jpg",
+  "kind": "eye",
+  "mask": "ellipse",
+  "rbox": [
+   0.275,
+   0.355,
+   0.335,
+   0.41
+  ]
+ }
+]
