@@ -16,10 +16,13 @@ render.py（15秒版）の素材（紙、疑似文字、ウィンドウ、マス
     FFMPEG                ffmpeg 実行ファイル
     OUT_DIR               preview と中間 WAV の出力先（既定はこのファイルの場所）
     CRF                   H.264 の画質（既定18。小さいほど高画質・大容量）
-写真素材は photos/ に画像を置くと FRAGS がそれを読む（無ければ手続き生成の代用品）。
+素材画像は assets/（Wellcome Collection と Library of Congress。出典とライセンスは assets/manifest.json と
+assets/CREDITS.md）。assets/crops.json に切り抜き範囲を書いた素材は、描いたモチーフの代わりに使う。
+素材が無い部分は、描いたモチーフのまま動く。
 """
 import glob
 import io
+import json
 import math
 import os
 import re
@@ -853,6 +856,127 @@ FLOWERS_S = [np.asarray(Image.fromarray(f).resize((14, 14), Image.NEAREST)) for 
 LEAVES = [motif_leaf(12, a) for a in np.linspace(0, 6.28, 12, endpoint=False)]
 
 
+# ---------------------------------------------------------------- 素材画像（Wellcome Collection / Library of Congress）
+# assets/crops.json の1項目 = {"file": "wellcome/xxxx.jpg", "kind": "eye", "box": [x0, y0, x1, y1], "mask": "ellipse"}
+#   kind : eye / eyeball / mouth / face / hand / body / flower / plant / landscape / water / building / interior /
+#          instrument / diagram / print
+#   mask : rect（四角のまま）/ ellipse（楕円に切る）/ ink（紙を抜いて線だけ残す）/ subject（背景色を抜く）
+# 素材は小さく縮めてから使い、ほかの画面と同じく最近傍で拡大する（ドットのまま、画面に馴染ませない）。
+ASSET_DIR = os.environ.get("ASSET_DIR", os.path.join(HERE, "assets"))
+
+
+def _load_crops():
+    p = os.path.join(ASSET_DIR, "crops.json")
+    if not os.path.exists(p):
+        return {}
+    out = {}
+    for c in json.load(open(p, encoding="utf-8")):
+        f = os.path.join(ASSET_DIR, c["file"])
+        if not os.path.exists(f):
+            continue
+        im = Image.open(f).convert("RGB")
+        if c.get("box"):
+            im = im.crop(tuple(c["box"]))
+        out.setdefault(c["kind"], []).append((im, c))
+    return out
+
+
+CROPS = _load_crops()
+
+
+def has(kind):
+    return bool(CROPS.get(kind))
+
+
+@lru_cache(maxsize=256)
+def cut(kind, i, w, h, mask=None):
+    """素材を (w, h) の切り抜き（RGBA）にする。"""
+    im, c = CROPS[kind][i % len(CROPS[kind])]
+    mask = mask or c.get("mask", "rect")
+    a = np.asarray(ImageOps.fit(im, (w, h), Image.LANCZOS)).astype(float)
+    yy, xx = np.mgrid[0:h, 0:w]
+    if mask == "ellipse":
+        al = (((xx - w / 2 + 0.5) / (w / 2)) ** 2 + ((yy - h / 2 + 0.5) / (h / 2)) ** 2) < 1
+    elif mask == "ink":
+        lum = a.mean(2)
+        al = lum < min(170, np.percentile(lum, 55) * 0.85)
+    elif mask == "subject":
+        border = np.concatenate([a[0], a[-1], a[:, 0], a[:, -1]])
+        al = np.abs(a - np.median(border, 0)).sum(2) > c.get("thr", 70)
+        al = np.asarray(Image.fromarray((al * 255).astype(np.uint8)).filter(ImageFilter.MedianFilter(3))) > 127
+    else:
+        al = np.ones((h, w), bool)
+    out = np.dstack([np.clip(a, 0, 255).astype(np.uint8), (al * 255).astype(np.uint8)])
+    out.flags.writeable = False
+    return out
+
+
+def n_of(kind):
+    return len(CROPS.get(kind, []))
+
+
+def _lid(e, b):
+    """写真の目に、まぶたを下ろす（瞬き）。"""
+    if b <= 0:
+        return e
+    o = e.copy()
+    h = o.shape[0]
+    skin = np.median(o[1:4][o[1:4, :, 3] > 0][:, :3], 0) if (o[1:4, :, 3] > 0).any() else np.array([210, 170, 150])
+    k = int(h * (0.25 + 0.6 * b))
+    o[:k, :, :3] = np.where(o[:k, :, 3:] > 0, skin, o[:k, :, :3])
+    o[max(0, k - 1):k + 1, :, :3] = np.where(o[max(0, k - 1):k + 1, :, 3:] > 0, (44, 30, 30), o[max(0, k - 1):k + 1, :, :3])
+    return o
+
+
+if has('landscape'):
+    LAND_S = cut('landscape', 0, 90, 160)[..., :3].copy(); LAND_FULL = up(LAND_S, 4)
+if has('building'):
+    BUILD_S = cut('building', 0, 90, 160)[..., :3].copy(); BUILD_FULL = up(BUILD_S, 4)
+if has('interior'):
+    CORR_S = cut('interior', 0, 90, 160)[..., :3].copy(); CORR_FULL = up(CORR_S, 4)
+if has('eye'):
+    _e0 = cut('eye', 0, 64, 32, 'ellipse')
+    _e1 = cut('eye', 1, 64, 32, 'ellipse') if n_of('eye') > 1 else _e0[:, ::-1]
+    EYE = {b: _lid(_e0, b) for b in (0.0, 0.5, 1.0)}
+    EYE_R = {b: _lid(_e1, b) for b in (0.0, 0.5, 1.0)}
+if has('eyeball') or has('eye'):
+    EYEBALL = cut('eyeball' if has('eyeball') else 'eye', 0, 40, 40, 'ellipse')
+if has('mouth'):
+    LIPS = cut('mouth', 0, 64, 32, 'ellipse')
+    LIPS_OPEN = cut('mouth', 1, 64, 32, 'ellipse') if n_of('mouth') > 1 else LIPS.copy()
+    if n_of('mouth') == 1:
+        LIPS_OPEN[14:18, 12:52, :3] = (60, 22, 30)
+if has('flower'):
+    FLOWERS = [cut('flower', i, 48, 48) for i in range(max(6, n_of('flower')))][:6]
+    FLOWERS_S = [np.asarray(Image.fromarray(np.ascontiguousarray(f)).resize((14, 14), Image.NEAREST)) for f in FLOWERS]
+if has('water'):
+    _WATER_PHOTO = cut('water', 0, 90, 160)[..., :3].astype(float)
+
+    def water_small(t, w=90, h=160):
+        """写真の水面を、12fpsでゆらす。"""
+        yy, xx = np.mgrid[0:h, 0:w]
+        tq = int(t * 12) / 12
+        sx = np.clip(xx + (2 * np.sin(yy * 0.35 + tq * 3)).astype(int), 0, w - 1)
+        sy = np.clip(yy + (1.2 * np.sin(xx * 0.25 + tq * 2)).astype(int), 0, h - 1)
+        return _WATER_PHOTO[sy, sx].astype(np.uint8)
+
+
+def ink_overlay(a, kind, i, x, y, w, h, strength=0.55, color=(58, 40, 52)):
+    """版画や図版の線だけを、画面の上に刷り重ねる（紙の部分は透ける）。"""
+    if not has(kind):
+        return a
+    ink = cut(kind, i, w, h, 'ink')
+    x, y = int(x), int(y)
+    x0, y0, x1, y1 = max(0, x), max(0, y), min(W, x + w), min(H, y + h)
+    if x1 <= x0 or y1 <= y0:
+        return a
+    s = ink[y0 - y:y1 - y, x0 - x:x1 - x]
+    m = s[..., 3] > 0
+    reg = a[y0:y1, x0:x1]
+    reg[m] = (reg[m] * (1 - strength) + np.array(color) * strength).astype(np.uint8)
+    return a
+
+
 def _eyes_pair():
     """選択範囲と同じ大きさの、肌ごと切り取った人間の両目。"""
     w, h = SEL[2] - SEL[0], SEL[3] - SEL[1]
@@ -917,7 +1041,17 @@ def window_content(kind):
     return src[y0:y0 + 74, 70:290].copy()
 
 
-# 写真断片の仲間にモチーフを加える（暴走の写真、破壊1の突き刺さる写真などに混ざる）
+# 15秒版の写真断片の代用品（床、窓、手、カーテン、空）を、素材画像があれば置き換える
+for _idx, _kind in ((0, 'interior'), (1, 'building'), (2, 'hand'), (3, 'plant'), (4, 'landscape')):
+    if has(_kind) and not PHOTO_FILES:
+        FRAGS[_idx] = cut(_kind, _idx, 96, 96)[..., :3].copy()
+        FULLS[_idx] = cut(_kind, _idx, 54, 96)[..., :3].copy()
+# 写真断片の仲間に素材画像とモチーフを加える（暴走の写真、破壊1の突き刺さる写真などに混ざる）
+for _kind in ('face', 'body', 'instrument', 'diagram', 'print', 'water', 'flower', 'eye'):
+    for _i in range(n_of(_kind)):
+        FRAGS.append(cut(_kind, _i, 96, 96)[..., :3].copy())
+        FULLS.append(cut(_kind, _i, 54, 96)[..., :3].copy())
+NFRAG = len(FRAGS)
 if not PHOTO_FILES:
     for _m in (LAND_S, BUILD_S, CORR_S, water_small(0), np.asarray(Image.fromarray(FLOWER_FIELD).resize((90, 160), Image.NEAREST))):
         FULLS.append(np.asarray(Image.fromarray(_m).resize((54, 96), Image.NEAREST)))
@@ -1936,6 +2070,8 @@ def finish(a):
 def erosion_base(t, st, g):
     """植物とカビが画面を侵食する。頭から花が咲き、窓のタイトルバーにも花が付く。"""
     a, mx, my, mm = render(st)
+    a = ink_overlay(a, 'body', 0, 10, int(640 - g * 520), 330, 440, 0.4 * g)       # 解剖図の線が下から這い上がる
+    a = ink_overlay(a, 'plant', 0, 190, int(40 + (1 - g) * 200), 170, 260, 0.45 * g)
     a = mold(a, g * 0.8)
     a = draw_vines(a, 'erosion', g)
     for i, w in enumerate(st['wins'][1:7]):
@@ -2022,6 +2158,7 @@ def sc_erosion(t, st, r, rs, t0, t1):
 def sc_garden(t, st, r, rs, t0, t1):
     """静 VI：静かな画面。窓の周りに花と蔓が残り、頭に小さな花が1輪。"""
     a, mx, my, mm = render(st)
+    a = ink_overlay(a, 'plant' if has('plant') else 'flower', 1, 196, 360, 160, 230, 0.3)   # 植物図の線が窓の外に刷られている
     a = draw_vines(a, 'garden', 1.0)
     f = np.asarray(Image.fromarray(FLOWERS[2]).resize((22, 22), Image.NEAREST))
     paste_rgba(a, f, mx + 100 - 11, my + 108 - int(56 * st['scale'] * 0.9) - 14)
@@ -2030,6 +2167,8 @@ def sc_garden(t, st, r, rs, t0, t1):
 
 # ---------------------------------------------------------------- 破壊6「コラージュ」
 SRC_NAMES = ['scene', 'land', 'build', 'water', 'corr', 'eyes', 'flowers', 'text', 'B']
+PHOTO_SRC = [k for k in ('print', 'diagram', 'face', 'instrument', 'body', 'hand') if has(k)]
+SRC_NAMES += PHOTO_SRC                                      # 素材画像があれば、帯や図形の穴にも入る
 
 
 def src_img(name, t, cache):
@@ -2039,6 +2178,7 @@ def src_img(name, t, cache):
             st = state(t); st['sway'] = 0
             cache[name] = with_eyeball(render(st, variant=1)[0], st)
         elif name == 'water': cache[name] = water_full(int(t * 12))
+        elif name in PHOTO_SRC: cache[name] = up(cut(name, 0, 90, 160)[..., :3], 4)
         else: cache[name] = {'land': LAND_FULL, 'build': BUILD_FULL, 'corr': CORR_FULL, 'eyes': EYE_WALL,
                              'flowers': FLOWER_FIELD, 'text': TEXT_FIELD}[name]
     return cache[name]
@@ -2067,7 +2207,8 @@ def collage_strips(t, u):
 
 
 SHAPES = [(0.05, 'arch', 'corr', 180, 430, 150), (0.25, 'circle', 'land', 108, 210, 110), (0.45, 'tri', 'build', 272, 300, 130),
-          (0.65, 'circle', 'eyeball', 250, 480, 72), (0.85, 'rect', 'water', 116, 520, 92), (1.05, 'circle', 'flowers', 190, 130, 96)]
+          (0.65, 'circle', 'eyeball', 250, 480, 72), (0.85, 'rect', 'water', 116, 520, 92),
+          (1.05, 'circle', 'instrument' if has('instrument') else 'flowers', 190, 130, 96)]
 
 
 def shape_mask(kind, cx, cy, rad):
@@ -2124,7 +2265,7 @@ def _facade():
 
 
 FACADE, FACADE_WIN = _facade()
-FACADE_KINDS = ['dark', 'lit', 'scene', 'eye', 'flower', 'bar', 'text', 'lips', 'B', 'water', 'land']
+FACADE_KINDS = ['dark', 'lit', 'scene', 'eye', 'flower', 'bar', 'text', 'lips', 'B', 'water', 'land'] + PHOTO_SRC
 CENTER_WIN = 17                                             # 真ん中の窓には、元の画面がそのまま小さく入っている
 
 
@@ -2138,6 +2279,8 @@ def facade_content(kind, t, i, cache):
         return np.asarray(Image.fromarray(src_img(kind, t, cache)).resize((w, h), Image.NEAREST))
     if kind == 'text':
         return TEXT_FIELD[i * 7 % 500:i * 7 % 500 + h, 40:40 + w]
+    if kind in PHOTO_SRC:
+        return cut(kind, i, w, h)[..., :3]
     c = np.full((h, w, 3), (214, 168, 148), np.uint8)
     if kind == 'eye':
         paste_rgba(c, np.asarray(Image.fromarray(EYE[0.0]).resize((36, 18), Image.NEAREST)), 0, 23)
